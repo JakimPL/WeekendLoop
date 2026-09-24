@@ -1,0 +1,12 @@
+state/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.env
+cron/run.env
+cron/weekend-loop.crontab
+agent_home/

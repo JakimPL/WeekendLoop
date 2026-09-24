@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pocketchat</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="top-bar">
+    <span class="logo">Sens<strong>AI</strong></span>
+    <button id="new-chat" type="button">New chat</button>
+  </header>
+  <main id="messages" class="messages" aria-live="polite"></main>
+  <form id="ask-form" class="ask-form">
+    <input id="question" type="text" placeholder="Ask Pocketchat anything…" autocomplete="off" required>
+    <button type="submit">Send</button>
+  </form>
+</body>
+</html>

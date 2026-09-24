@@ -1,0 +1,16 @@
+# Weekend Loop reads this file from the workspace that holds it.
+# Everything not written here takes the default that `weekend-loop config reference` prints.
+
+repos:
+  myrepo:
+    slug: your-org/your-repository
+    mode: dry_run            # dry_run reads and reports; execute opens draft pull requests
+    backend: github          # github, or local for a board on disk
+    gate_commands:           # what has to pass before a branch is offered
+      - "pytest -q"
+
+identity:
+  git_author_email: you@example.com
+
+schedule:
+  repo_key: myrepo

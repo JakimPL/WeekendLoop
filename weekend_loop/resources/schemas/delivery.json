@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "Confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "DeliveryStatus": {
+      "enum": [
+        "done",
+        "partial",
+        "abandoned",
+        "needs_input"
+      ],
+      "title": "DeliveryStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The worker's account of one attempt; the orchestrator verifies every claim independently.",
+  "properties": {
+    "commit_subject": {
+      "title": "Commit Subject",
+      "type": "string"
+    },
+    "confidence": {
+      "$ref": "#/$defs/Confidence"
+    },
+    "files_changed": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Files Changed",
+      "type": "array"
+    },
+    "judgement_calls": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Judgement Calls",
+      "type": "array"
+    },
+    "questions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Questions",
+      "type": "array"
+    },
+    "status": {
+      "$ref": "#/$defs/DeliveryStatus"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "verification": {
+      "title": "Verification",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "commit_subject",
+    "summary",
+    "verification",
+    "judgement_calls",
+    "questions",
+    "files_changed",
+    "confidence"
+  ],
+  "title": "Delivery",
+  "type": "object"
+}

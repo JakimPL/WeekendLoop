@@ -1,0 +1,62 @@
+[project]
+name = "weekend-loop"
+version = "0.1.0"
+description = "Budget-bounded, policy-constrained agent that turns leftover subscription capacity into reviewable draft pull requests."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Jakim" }]
+dependencies = [
+    "fastapi>=0.141.1",
+    "pydantic>=2.11",
+    "python-multipart>=0.0.32",
+    "pyyaml>=6.0",
+    "uvicorn>=0.53.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/JakimPL/WeekendLoop"
+Source = "https://github.com/JakimPL/WeekendLoop"
+
+[project.scripts]
+weekend-loop = "weekend_loop.cli:entry_point"
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.13.0",
+    "mypy>=1.14",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "types-PyYAML>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["weekend_loop"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["examples/demo-repo", ".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N", "ANN"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+# the example repository is on the path so its hidden acceptance tests type-check
+mypy_path = ["examples/demo-repo"]
+files = ["weekend_loop", "tests", "examples/acceptance"]
+exclude = ["examples/demo-repo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -q"
+markers = ["e2e: a whole run end to end; seconds, not milliseconds"]

@@ -1,0 +1,84 @@
+repos:
+  demo: &demo
+    slug: example-org/example-board
+    mode: execute
+    backend: local
+    token_file: secrets/github-demo.token
+    base_branch: main
+    recurse_submodules: false
+    remote_url: null
+    setup_commands:
+      - "uv sync --locked"
+    acceptance_command: "uv run --no-sync pytest {test_file} --tb=short -q"
+    conventions_prompt: prompts/conventions.md
+    gate_commands:
+      - "uv run --no-sync pytest tests --tb=short -q"
+      - "uv run --no-sync ruff check {changed_python_files}"
+      - "uv run --no-sync ruff format --check {changed_python_files}"
+    forbidden_paths:
+      - ".github/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".pre-commit-config.yaml"
+      - "**/.env"
+  demo-github:
+    <<: *demo
+    backend: github
+
+budget:
+  envelope_usd: 15.0
+  per_task_usd: 6.0
+  assessor_usd: 0.5
+  max_tasks: 3
+  weekly_reset_at: null
+
+usage:
+  seven_day_ceiling: 0.95
+  seven_day_reserve: 0.08
+  five_hour_ceiling: 0.95
+  probe_usd: 0.05
+  probe_timeout_seconds: 120
+
+models:
+  assessor: sonnet
+  assessor_effort: low
+  worker: opus
+  worker_effort: high
+
+worker:
+  timeout_minutes: 45
+  assessor_timeout_minutes: 8
+  idle_minutes: 15
+  max_diff_lines: 400
+  allowed_effort: [XS, S]
+  allowed_risk: [docs, tests, refactor, behaviour]
+  branch_prefix: weekend/
+
+labels:
+  auto: "weekend:auto"
+  approved: "weekend:approved"
+  never: "weekend:never"
+  review: "weekend:review"
+  needs_input: "weekend:needs-input"
+  unfinished: "weekend:unfinished"
+
+eligibility:
+  minimum_body_length: 50
+  excluded_title_pattern: "EPIC|AREA|SPIKE|Literature|experiments|analysis"
+  foreign_activity_window_hours: 48
+
+schedule:
+  repo_key: demo
+  timezone: Europe/Warsaw
+  window:
+    opens: {day_of_week: fri, hour: 18, minute: 0}
+    closes: {day_of_week: sun, hour: 23, minute: 59}
+  runs:
+    - {day_of_week: thu, hour: 20, minute: 0, command: prepare}
+    - {day_of_week: fri, hour: 21, minute: 0, command: weekend}
+    - {day_of_week: sat, hour: 10, minute: 0, command: weekend}
+
+identity:
+  git_author_name: "Weekend Loop"
+  git_author_email: "weekend-loop@example.invalid"
+  comment_footer: "— weekend-loop run {run_id}"

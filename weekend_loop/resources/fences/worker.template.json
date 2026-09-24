@@ -1,0 +1,140 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(pre-commit *)",
+      "Bash(make *)",
+      "Bash(uv add *)",
+      "Bash(uv remove *)",
+      "Bash(uv lock *)",
+      "Bash(uv sync *)",
+      "Bash(uv pip *)",
+      "Bash(uv tool *)",
+      "Bash(uv python *)",
+      "Bash(pip *)",
+      "Bash(pip3 *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(rsync *)",
+      "Bash(nc *)",
+      "Bash(socat *)",
+      "Bash(docker *)",
+      "Bash(sudo *)",
+      "Bash(su *)",
+      "Edit(.github/**)",
+      "Write(.github/**)",
+      "Edit(**/pyproject.toml)",
+      "Write(**/pyproject.toml)",
+      "Edit(**/uv.lock)",
+      "Write(**/uv.lock)",
+      "Edit(**/Makefile)",
+      "Write(**/Makefile)",
+      "Edit(**/.pre-commit-config.yaml)",
+      "Write(**/.pre-commit-config.yaml)",
+      "Edit(config/**)",
+      "Write(config/**)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(__WORKSPACE_HOME__/secrets/**)",
+      "Read(__WORKSPACE_HOME__/state/**)",
+      "Read(__WORKSPACE_HOME__/agent-home/**)",
+      "Read(__WORKSPACE_HOME__/config.yaml)",
+      "Read(/__OPERATOR_HOME__/.ssh/**)",
+      "Read(/__OPERATOR_HOME__/.aws/**)",
+      "Read(/__OPERATOR_HOME__/.config/gh/**)",
+      "Read(/__OPERATOR_HOME__/.claude/**)",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "Task"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": true,
+    "network": {
+      "allowedDomains": [
+        "api.anthropic.com"
+      ],
+      "strictAllowlist": true
+    },
+    "credentials": {
+      "files": [
+        {
+          "path": "__OPERATOR_HOME__/.ssh",
+          "mode": "deny"
+        },
+        {
+          "path": "__OPERATOR_HOME__/.aws",
+          "mode": "deny"
+        },
+        {
+          "path": "__OPERATOR_HOME__/.config/gh",
+          "mode": "deny"
+        },
+        {
+          "path": "__OPERATOR_HOME__/.claude",
+          "mode": "deny"
+        },
+        {
+          "path": "__WORKSPACE_HOME__/secrets",
+          "mode": "deny"
+        },
+        {
+          "path": "__WORKSPACE_HOME__/state",
+          "mode": "deny"
+        },
+        {
+          "path": "__WORKSPACE_HOME__/agent-home",
+          "mode": "deny"
+        }
+      ],
+      "envVars": [
+        {
+          "name": "CLAUDE_CODE_OAUTH_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "mode": "deny"
+        },
+        {
+          "name": "GH_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "GITHUB_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "AWS_ACCESS_KEY_ID",
+          "mode": "deny"
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "mode": "deny"
+        },
+        {
+          "name": "AWS_SESSION_TOKEN",
+          "mode": "deny"
+        }
+      ]
+    }
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "autoContinueAtUsageLimit": false,
+  "env": {
+    "UV_NO_SYNC": "1",
+    "CUDA_VISIBLE_DEVICES": "",
+    "DISABLE_AUTOUPDATER": "1",
+    "DISABLE_TELEMETRY": "1"
+  }
+}

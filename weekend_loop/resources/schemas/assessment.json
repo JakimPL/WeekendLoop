@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "Blocker": {
+      "enum": [
+        "empty_body",
+        "unclear_goal",
+        "no_acceptance_criteria",
+        "needs_external_data",
+        "needs_gpu",
+        "needs_human",
+        "needs_web",
+        "depends_on_open_issue",
+        "overlaps_open_pr",
+        "too_large",
+        "touches_forbidden_paths",
+        "assessor_failed"
+      ],
+      "title": "Blocker",
+      "type": "string"
+    },
+    "Confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "Effort": {
+      "enum": [
+        "XS",
+        "S",
+        "M",
+        "L"
+      ],
+      "title": "Effort",
+      "type": "string"
+    },
+    "Risk": {
+      "enum": [
+        "docs",
+        "tests",
+        "refactor",
+        "behaviour",
+        "interface"
+      ],
+      "title": "Risk",
+      "type": "string"
+    },
+    "Verdict": {
+      "enum": [
+        "execute",
+        "propose",
+        "needs_input",
+        "skip"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The assessor's verdict on one eligible issue, produced without any write access.",
+  "properties": {
+    "blockers": {
+      "items": {
+        "$ref": "#/$defs/Blocker"
+      },
+      "title": "Blockers",
+      "type": "array"
+    },
+    "confidence": {
+      "$ref": "#/$defs/Confidence"
+    },
+    "effort": {
+      "$ref": "#/$defs/Effort"
+    },
+    "plan": {
+      "title": "Plan",
+      "type": "string"
+    },
+    "questions": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 3,
+      "title": "Questions",
+      "type": "array"
+    },
+    "risk": {
+      "$ref": "#/$defs/Risk"
+    },
+    "touched_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Touched Paths",
+      "type": "array"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict"
+    }
+  },
+  "required": [
+    "verdict",
+    "effort",
+    "risk",
+    "blockers",
+    "plan",
+    "touched_paths",
+    "questions",
+    "confidence"
+  ],
+  "title": "Assessment",
+  "type": "object"
+}

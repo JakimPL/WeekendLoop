@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "Task",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(__WORKSPACE_HOME__/secrets/**)",
+      "Read(__WORKSPACE_HOME__/state/**)",
+      "Read(__WORKSPACE_HOME__/agent-home/**)",
+      "Read(__WORKSPACE_HOME__/config.yaml)",
+      "Read(/__OPERATOR_HOME__/.ssh/**)",
+      "Read(/__OPERATOR_HOME__/.aws/**)",
+      "Read(/__OPERATOR_HOME__/.config/gh/**)",
+      "Read(/__OPERATOR_HOME__/.claude/**)"
+    ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "autoContinueAtUsageLimit": false,
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "DISABLE_AUTOUPDATER": "1",
+    "DISABLE_TELEMETRY": "1"
+  }
+}
