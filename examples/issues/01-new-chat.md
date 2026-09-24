@@ -7,28 +7,18 @@ expected_ineligibility: null
 acceptance_test: test_new_chat.py
 overlapping_branch: null
 ---
-## Business requirement
+When people switch topic they hit "New chat" expecting a clean page, but nothing happens and the old
+conversation just stays there. Somebody started this and never finished it: the button in the page
+already POSTs to `/api/new-chat` (see `pocketchat/static/app.js`, that part is fine and should stay as
+is), but the server has no such route.
 
-People press New chat when they change topic and want a clean page. The button is already on the
-page, but clicking it does nothing, so the old conversation stays on screen. The work was started
-and never finished.
+What I want: `POST /api/new-chat` throws the conversation away and returns the messages in the same
+shape as `GET /api/messages`, so the page ends up showing only the greeting. That needs a way for a
+`Chat` to start over, plus the route in `pocketchat/routes.py`. There's also a skipped test in
+`tests/test_routes.py` (`test_new_chat_keeps_only_the_greeting`), so please unskip it.
 
-## Goal
-
-Clicking New chat clears the conversation and shows only Pocketchat's greeting again.
-
-## Scope
-
-- `pocketchat/static/app.js` already sends `POST /api/new-chat` when the button is clicked and shows the
-  messages that come back; it stays as it is.
-- `pocketchat/routes.py`: answer `POST /api/new-chat` by starting the conversation over and returning its
-  messages, in the same shape as `GET /api/messages`.
-- `pocketchat/chat.py`: let a chat start over with only the greeting.
-- `tests/test_routes.py`: remove the skip from `test_new_chat_keeps_only_the_greeting`.
-
-## Acceptance criteria
-
-- After a question and its answer, `POST /api/new-chat` responds with status 200 and only the greeting.
-- `GET /api/messages` afterwards returns only the greeting.
-- A question asked after New chat gets an answer as usual.
-- The existing tests keep passing.
+Done when:
+- after asking something, `POST /api/new-chat` returns 200 with just the greeting
+- `GET /api/messages` afterwards also returns just the greeting
+- asking a new question after that works as usual
+- the rest of the tests still pass

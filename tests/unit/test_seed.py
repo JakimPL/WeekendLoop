@@ -19,7 +19,8 @@ from weekend_loop.models import IneligibilityReason, Policy, Verdict
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = REPOSITORY_ROOT / "examples"
 CREATED_ISSUE_URL = "https://github.com/owner/repository/issues/99\n"
-TEMPLATE_SECTIONS = ("## Business requirement", "## Goal", "## Scope")
+TEMPLATE_HEADINGS = ("## Business requirement", "## Goal", "## Scope")
+MINIMUM_BODY_LENGTH = 200
 EXPECTED_ISSUE_COUNT = 7
 
 
@@ -53,10 +54,17 @@ def test_seven_issues_with_unique_keys(issues: list[SeedIssue]) -> None:
     assert len({issue.key for issue in issues}) == EXPECTED_ISSUE_COUNT
 
 
-def test_every_issue_follows_the_template(issues: list[SeedIssue]) -> None:
+def test_issues_are_written_in_free_form(issues: list[SeedIssue]) -> None:
     for issue in issues:
-        for section in TEMPLATE_SECTIONS:
-            assert section in issue.body, f"{issue.key} lacks {section}"
+        assert not all(heading in issue.body for heading in TEMPLATE_HEADINGS), issue.key
+        assert len(issue.body) >= MINIMUM_BODY_LENGTH, issue.key
+
+
+def test_some_issues_state_acceptance_criteria_and_others_leave_them_out(
+    issues: list[SeedIssue],
+) -> None:
+    stated = [issue for issue in issues if "Done when" in issue.body or "criteria" in issue.body]
+    assert 0 < len(stated) < len(issues)
 
 
 def test_expected_outcomes_cover_every_pilot_scenario(issues: list[SeedIssue]) -> None:
