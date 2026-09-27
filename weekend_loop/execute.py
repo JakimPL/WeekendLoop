@@ -44,7 +44,7 @@ from weekend_loop.records import append_record, write_record
 from weekend_loop.report import EFFORT_ORDER
 from weekend_loop.runs import RunDirectory, RunProgress, append_event, ledger_path
 from weekend_loop.supervision import STOP_DETAIL, Hold, RunSupervisor
-from weekend_loop.waves import Wave, overlaps_within, waves_of
+from weekend_loop.waves import Wave, overlaps_within, sibling_paths, waves_of
 from weekend_loop.workbench import (
     add_worktree,
     base_reference,
@@ -64,7 +64,7 @@ from weekend_loop.workbench import (
     run_setup_commands,
     write_askpass_script,
 )
-from weekend_loop.worker import abandoned_delivery, load_worker_prompts
+from weekend_loop.worker import TaskGuidance, abandoned_delivery, load_worker_prompts
 
 DELIVERY_FILENAME: Final[str] = "delivery.json"
 GATE_FILENAME: Final[str] = "gate.json"
@@ -182,7 +182,7 @@ def run_task(
     bench: TaskBench,
     task: Task,
     issue: Issue,
-    answers: list[str],
+    guidance: TaskGuidance,
     acceptance_tests: dict[int, Path],
     supervisor: RunSupervisor,
     progress: RunProgress,
@@ -190,7 +190,7 @@ def run_task(
     observed_costs: list[float],
 ) -> tuple[Task, WorkerOutcome, Halt | None]:
     outcome, halt = work_on(
-        policy, bench, task, issue, answers, supervisor, progress, deadline, observed_costs
+        policy, bench, task, issue, guidance, supervisor, progress, deadline, observed_costs
     )
     return settle(
         policy, bench, task.issue_number, outcome, halt, acceptance_tests, supervisor, progress
@@ -522,10 +522,13 @@ def finish_interrupted_task(
         return halt
     if issue is None:
         raise ValueError(f"issue #{task.issue_number} needs its issue to carry on")
-    answers = guidance_for(
-        read_inbox(progress.run_directory.inbox),
-        read_briefing(policy.state_dir, progress.state.repo_key),
-        task,
+    guidance = TaskGuidance(
+        answers=guidance_for(
+            read_inbox(progress.run_directory.inbox),
+            read_briefing(policy.state_dir, progress.state.repo_key),
+            task,
+        ),
+        wave_paths=[],
     )
     if action is ResumeAction.START_OVER:
         updated, outcome, halt = run_task(
@@ -533,7 +536,7 @@ def finish_interrupted_task(
             bench,
             task,
             issue,
-            answers,
+            guidance,
             acceptance_tests,
             supervisor,
             progress,
@@ -549,7 +552,7 @@ def finish_interrupted_task(
             bench,
             resumed,
             issue,
-            task_prompt(policy, bench, resumed, issue, answers),
+            task_prompt(policy, bench, resumed, issue, guidance),
             True,
             supervisor,
             progress,
@@ -620,7 +623,7 @@ def work_task(
     bench: TaskBench,
     task: Task,
     issue: Issue,
-    answers: list[str],
+    guidance: TaskGuidance,
     acceptance_tests: dict[int, Path],
     supervisor: RunSupervisor,
     progress: RunProgress,
@@ -632,7 +635,7 @@ def work_task(
         bench,
         task,
         issue,
-        answers,
+        guidance,
         acceptance_tests,
         supervisor,
         progress,
@@ -693,7 +696,7 @@ def work_in_turn(
             bench,
             task,
             issues[task.issue_number],
-            guidance_for(inbox, briefing, task),
+            TaskGuidance(answers=guidance_for(inbox, briefing, task), wave_paths=[]),
             acceptance_tests,
             supervisor,
             progress,
@@ -805,7 +808,10 @@ def run_wave(
                 worktree_bench,
                 task,
                 issues[task.issue_number],
-                guidance_for(inbox, briefing, task),
+                TaskGuidance(
+                    answers=guidance_for(inbox, briefing, task),
+                    wave_paths=sibling_paths(tasks, task),
+                ),
                 acceptance_tests,
                 supervisor,
                 progress,

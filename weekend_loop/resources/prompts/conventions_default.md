@@ -6,6 +6,8 @@ subject style of the recent history.
 
 Hold to these in any repository:
 - Change as little as the task needs, in the files the task names.
+- Two tasks in one run never change the same hand-written file; shared files such as a changelog
+  or a generated catalog are appended to, never rewritten.
 - Leave dependencies and lockfiles as they are; they are the human's to change.
 - Leave continuous integration configuration alone.
 - Verify with the repository's own gate commands, which the task message lists.

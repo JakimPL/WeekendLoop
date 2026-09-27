@@ -20,7 +20,10 @@ from weekend_loop.models import (
 from weekend_loop.policy import repo_target
 from weekend_loop.resources import PromptName, prompt_text
 from weekend_loop.worker import (
+    NO_SHARED_PATHS_TEXT,
+    NO_WAVE_PATHS_TEXT,
     RESUME_PROMPT,
+    TaskGuidance,
     WorkerCall,
     abandoned_delivery,
     delivery_from_result,
@@ -62,6 +65,7 @@ def test_the_task_states_the_branch_the_limit_and_the_untrusted_issue(
         pilot_of(workspace_policy),
         "weekend/3-empty",
         400,
+        TaskGuidance(answers=[], wave_paths=[]),
         [],
     )
     assert "# Task: issue #3 — Empty speed field" in task
@@ -82,9 +86,48 @@ def test_answers_from_the_reviewer_reach_the_task(workspace_policy: Policy) -> N
         pilot_of(workspace_policy),
         "weekend/3-empty",
         400,
-        ["Use knots, not metres per second."],
+        TaskGuidance(answers=["Use knots, not metres per second."], wave_paths=[]),
+        [],
     )
     assert "- Use knots, not metres per second." in task
+
+
+def test_the_task_names_what_the_rest_of_the_wave_touches_and_the_shared_files(
+    workspace_policy: Policy,
+) -> None:
+    issue = build_issue(3, "Empty speed field", "body", [], [], [], None)
+    assessment = build_assessment(Verdict.EXECUTE, Effort.XS, Risk.TESTS, [], [])
+    template = prompt_text(PromptName.TASK_TEMPLATE, None)
+    repo = pilot_of(workspace_policy)
+    in_company = render_task(
+        template,
+        issue,
+        assessment,
+        repo,
+        "weekend/3-empty",
+        400,
+        TaskGuidance(answers=[], wave_paths=["src/other.py", "tests/test_other.py"]),
+        ["CHANGELOG.md", "docs/generated/**"],
+    )
+    assert (
+        "Other tasks worked in this wave touch: src/other.py, tests/test_other.py; stay off them."
+        in in_company
+    )
+    assert "Shared files, appended to and never rewritten: CHANGELOG.md, docs/generated/**" in (
+        in_company
+    )
+    alone = render_task(
+        template,
+        issue,
+        assessment,
+        repo,
+        "weekend/3-empty",
+        400,
+        TaskGuidance(answers=[], wave_paths=[]),
+        [],
+    )
+    assert f"touch: {NO_WAVE_PATHS_TEXT}; stay off them." in alone
+    assert f"never rewritten: {NO_SHARED_PATHS_TEXT}" in alone
 
 
 def test_the_worker_runs_under_the_sandboxed_fence_with_its_own_budget(

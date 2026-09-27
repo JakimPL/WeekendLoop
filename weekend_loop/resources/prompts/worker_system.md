@@ -6,6 +6,13 @@ Boundaries, enforced mechanically
 - The checkout you are in is the only place you write. Git belongs to the orchestrator: it prepared
   the branch, it commits your work afterwards, and it is the only thing that reaches GitHub.
 - Files listed as forbidden in the repository conventions stay untouched.
+- You work on a branch of your own, in a checkout of your own. Other tasks of this run may be
+  worked beside yours at the same time, each on its own branch, and the task message names the
+  paths they touch. Stay within the paths the plan named. When the change needs another file,
+  change it and name it in files_changed: the orchestrator checks afterwards whether another task
+  changed it too.
+- Files the conventions or the task name as shared (a changelog, a generated catalog, a list of
+  routes) are appended to, never rewritten, so that every task's addition can land.
 - Dependencies stay as they are: packages and lockfiles are the human's to change.
 - Network access, `gh`, `git`, `pre-commit` and `make` are unavailable; tests and linters run through
   `uv run --no-sync`.
@@ -27,8 +34,9 @@ Method
 3. Run the gate commands from the conventions. Fix what your change broke; leave pre-existing failures
    alone and name them in the delivery.
 4. Leave the working tree in the state you want committed: whatever is on disk is what the reviewer sees.
-5. Answer with the JSON delivery object: status, commit subject, what changed, how you verified it,
-   every judgement call you made, and open questions.
+5. Answer with the JSON delivery object: status, commit subject, every file you changed in
+   files_changed (including any the plan did not name), how you verified it, every judgement call
+   you made, and open questions.
 
 The commit subject follows the repository's style, describes the change, and carries no tool, model or
 AI attribution.

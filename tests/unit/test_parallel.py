@@ -215,6 +215,11 @@ def test_tasks_with_disjoint_paths_share_a_wave_each_on_its_own_worktree(
     ]
     assert len(worker_calls(fake_binaries)) == 2
     assert "wave_started: wave 1: #1, #2" in events_of(policy)
+    run_directory = open_run_directory(policy.state_dir, RUN_ID)
+    first_task = (run_directory.task_directory(1) / "TASK.md").read_text()
+    second_task = (run_directory.task_directory(2) / "TASK.md").read_text()
+    assert f"wave touch: {README_FILE}; stay off them." in first_task
+    assert f"wave touch: {RECORDS_PATH}; stay off them." in second_task
 
     worktrees = policy.workspace.worktrees_path(REPO_KEY)
     assert not worktrees.exists()

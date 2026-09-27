@@ -26,6 +26,8 @@ REQUIRED_PLACEHOLDERS = {
         "{delivery_fallback}",
         "{plan}",
         "{answers}",
+        "{wave_paths}",
+        "{shared_paths}",
         "{issue_body}",
     },
 }

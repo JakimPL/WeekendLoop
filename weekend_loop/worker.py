@@ -30,6 +30,8 @@ DELIVERY_FALLBACK: Final[str] = (
     ", and print that same JSON object as your final message if the structured answer fails"
 )
 NO_ANSWERS_TEXT: Final[str] = "None yet; nobody is available during the run."
+NO_WAVE_PATHS_TEXT: Final[str] = "none; this task runs alone"
+NO_SHARED_PATHS_TEXT: Final[str] = "none named"
 ABANDONED_SUMMARY_TEMPLATE: Final[str] = "No delivery arrived; the run ended as {outcome}."
 RESUME_PROMPT: Final[str] = (
     "Your previous turn was interrupted before it finished. Check what is already on disk in "
@@ -50,6 +52,11 @@ class WorkerPrompts(Record):
     json_schema: str
 
 
+class TaskGuidance(Record):
+    answers: list[str]
+    wave_paths: list[str]
+
+
 def conventions_text(repo: RepoTarget, overrides: Path) -> str:
     if repo.conventions_prompt is None:
         return prompt_text(PromptName.CONVENTIONS_DEFAULT, overrides)
@@ -66,6 +73,10 @@ def load_worker_prompts(repo: RepoTarget, overrides: Path) -> WorkerPrompts:
     )
 
 
+def listed(paths: list[str], empty_text: str) -> str:
+    return ", ".join(paths) if paths else empty_text
+
+
 def render_task(
     template: str,
     issue: Issue,
@@ -73,8 +84,10 @@ def render_task(
     repo: RepoTarget,
     branch: str,
     max_diff_lines: int,
-    answers: list[str],
+    guidance: TaskGuidance,
+    shared_paths: list[str],
 ) -> str:
+    answers = guidance.answers
     return template.format(
         issue_number=issue.number,
         issue_title=issue.title,
@@ -82,6 +95,8 @@ def render_task(
         branch=branch,
         base_branch=repo.base_branch,
         max_diff_lines=max_diff_lines,
+        wave_paths=listed(guidance.wave_paths, NO_WAVE_PATHS_TEXT),
+        shared_paths=listed(shared_paths, NO_SHARED_PATHS_TEXT),
         delivery_fallback=DELIVERY_FALLBACK,
         plan=assessment.plan.strip(),
         answers="\n".join(f"- {answer}" for answer in answers) if answers else NO_ANSWERS_TEXT,

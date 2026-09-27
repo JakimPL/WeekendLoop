@@ -27,8 +27,11 @@ Effort: XS is at most 30 changed lines in at most 2 files; S at most 150 lines i
 M at most 400 lines; L anything larger or unbounded.
 Risk, from lowest to highest: docs (prose only), tests (test code only), refactor (behaviour preserved),
 behaviour (observable change), interface (public API, configuration, CI, dependencies, security).
-touched_paths: repository-relative paths you expect to change. List paths you confirmed exist; mark new
-files with a trailing " (new)".
+touched_paths: every repository-relative path the plan will change: source, tests, docs, generated
+files and configuration alike. List paths you confirmed exist; mark new files with a trailing " (new)".
+A directory counts as everything under it. The run schedules parallel work from this list: tasks whose
+paths are disjoint run at the same time, so a path left out can put two tasks that change the same
+file into one wave. When in doubt, list the file.
 plan: at most ten imperative lines, concrete enough that another engineer could execute them.
 confidence: high when the issue names files and acceptance criteria and you verified both; medium when
 one of them is inferred; low otherwise.

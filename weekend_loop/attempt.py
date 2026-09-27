@@ -30,7 +30,13 @@ from weekend_loop.workbench import (
     reset_to_base,
     reset_worktree,
 )
-from weekend_loop.worker import WorkerCall, WorkerPrompts, render_task, run_worker
+from weekend_loop.worker import (
+    TaskGuidance,
+    WorkerCall,
+    WorkerPrompts,
+    render_task,
+    run_worker,
+)
 
 TASK_FILENAME: Final[str] = "TASK.md"
 WORKER_TRANSCRIPT_ROLE: Final[str] = "worker"
@@ -190,7 +196,7 @@ def write_task_record(progress: RunProgress, issue_number: int, prompt: str) -> 
 
 
 def task_prompt(
-    policy: Policy, bench: TaskBench, task: Task, issue: Issue, answers: list[str]
+    policy: Policy, bench: TaskBench, task: Task, issue: Issue, guidance: TaskGuidance
 ) -> str:
     assessment = task.assessment
     if assessment is None:
@@ -202,7 +208,8 @@ def task_prompt(
         bench.repo,
         branch_of(task),
         policy.worker.max_diff_lines,
-        answers,
+        guidance,
+        policy.worker.shared_paths,
     )
 
 
@@ -211,14 +218,14 @@ def work_on(
     bench: TaskBench,
     task: Task,
     issue: Issue,
-    answers: list[str],
+    guidance: TaskGuidance,
     supervisor: RunSupervisor,
     progress: RunProgress,
     deadline: datetime,
     observed_costs: list[float],
 ) -> tuple[WorkerOutcome, Halt | None]:
     working = start_branch(policy, bench, task, issue, progress)
-    prompt = task_prompt(policy, bench, working, issue, answers)
+    prompt = task_prompt(policy, bench, working, issue, guidance)
     write_task_record(progress, issue.number, prompt)
     return drive_worker(
         policy, bench, working, issue, prompt, False, supervisor, progress, deadline, observed_costs

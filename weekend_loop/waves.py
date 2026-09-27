@@ -95,3 +95,14 @@ def overlaps_within(
                 found.setdefault(first, []).append(Overlap(issue_number=second, paths=common))
                 found.setdefault(second, []).append(Overlap(issue_number=first, paths=common))
     return found
+
+
+def sibling_paths(tasks: list[Task], task: Task) -> list[str]:
+    return sorted(
+        {
+            path
+            for other in tasks
+            if other.issue_number != task.issue_number
+            for path in touched_paths_of(other)
+        }
+    )
