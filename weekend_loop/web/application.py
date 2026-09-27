@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Final
+from zoneinfo import ZoneInfo
 
 import uvicorn
 from fastapi import FastAPI, Form, HTTPException
@@ -21,9 +22,10 @@ from weekend_loop.mailbox import (
 )
 from weekend_loop.models import Inbox, Policy, RunState
 from weekend_loop.runs import RunDirectory, list_run_ids, load_run_state, open_run_directory
-from weekend_loop.status import current_status
+from weekend_loop.status import current_status, read_run_events
 from weekend_loop.transcript import rendered_transcript
-from weekend_loop.web import pages
+from weekend_loop.web import demo_pages, pages
+from weekend_loop.web.demo import DemoView, build_demo_view
 from weekend_loop.web.view import LIVE_EVENT_COUNT, LIVE_TRANSCRIPT_LINES, build_view
 
 APPLICATION_TITLE: Final[str] = "Weekend Loop"
@@ -61,6 +63,21 @@ def require_run(policy: Policy, run_id: str | None) -> tuple[RunDirectory, RunSt
     if opened is None:
         raise HTTPException(status_code=NOT_FOUND, detail="no such run")
     return opened
+
+
+def demo_view_of(policy: Policy, run_id: str | None) -> DemoView | None:
+    opened = open_run(policy, run_id)
+    if opened is None:
+        if run_id is not None:
+            raise HTTPException(status_code=NOT_FOUND, detail="no such run")
+        return None
+    run_directory, state = opened
+    return build_demo_view(
+        state,
+        current_status(run_directory, 0, 0),
+        read_run_events(run_directory),
+        ZoneInfo(policy.schedule.timezone),
+    )
 
 
 def pull_request_links(state: RunState) -> dict[int, str]:
@@ -117,6 +134,14 @@ def build_application(policy: Policy) -> FastAPI:
         status = current_status(run_directory, 0, 0)
         lines = rendered_transcript(status.transcript) if status.transcript is not None else []
         return pages.render_live_transcript(status, lines)
+
+    @application.get(demo_pages.DEMO_PATH, response_class=HTMLResponse)
+    def demo_page(run_id: str | None = None) -> str:
+        return demo_pages.render_demo_page(demo_view_of(policy, run_id))
+
+    @application.get(demo_pages.DEMO_BODY_PATH, response_class=HTMLResponse)
+    def demo_body(run_id: str | None = None) -> str:
+        return demo_pages.render_demo_body(demo_view_of(policy, run_id))
 
     @application.get("/runs", response_class=HTMLResponse)
     def runs_page() -> str:

@@ -61,7 +61,7 @@ weekend_loop/intake.py      reads the operator's replies on the issues into the 
 weekend_loop/adopt.py       taking up a prepared triage, re-assessing only what changed
 weekend_loop/briefing.py    the operator's standing answers and notes, kept across runs
 weekend_loop/notify.py      the outbound alert: a webhook the operator points at Slack or Discord
-weekend_loop/web/           the web application: the run, its questions, the standing notes and the digest
+weekend_loop/web/           the web application: the run, its questions, the standing notes, the digest and the demo view
 weekend_loop/lock.py        the lock that keeps two runs off the same state directory
 weekend_loop/supervision.py the run's pulse: what it is doing now, its stop requests and its waits
 weekend_loop/allowance.py   waiting out the five-hour window between and inside calls

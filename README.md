@@ -95,7 +95,8 @@ budget is spent or the weekend ends.
 happened and what it cost.
 
 `weekend-loop status` and `weekend-loop watch` show a run in progress. `weekend-loop web` shows the
-same view, plus the questions, on localhost.
+same view, plus the questions, on localhost, and its `/demo` page is a plain two-column view of the
+run for showing to other people.
 
 ## Safeguards
 

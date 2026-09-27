@@ -326,6 +326,13 @@ The run page of `weekend-loop web` shows the same in its live card: the last 30 
 and the last 10 events, refreshed every 10 seconds while the run is alive. It links to the full
 transcript of the current call.
 
+For showing a run to other people, open http://127.0.0.1:8788/demo. It is one screen with two
+columns: on the left, the run's steps as a table in plain words (time, issue, step, outcome); on
+the right, every issue with its current status and a link to its pull request once one exists. It
+shows no spend, refreshes every five seconds, and follows the newest run, so it can be open before
+`weekend` starts and switches to the new run as soon as it begins. `/demo?run_id=<run-id>` pins one
+run.
+
 All of these views read plain files under `<workspace>/state/runs/<run-id>/`. `pulse.json` shows the
 process and its current activity. `events.jsonl` logs each step. Each `claude` call streams into its
 own transcript, one JSON message per line:
