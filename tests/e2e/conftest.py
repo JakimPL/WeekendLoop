@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -20,16 +21,19 @@ SECRET_MODE = 0o600
 ASSESSOR_COST = 0.05
 WORKER_COST = 0.4
 EXECUTE_ISSUES = (1, 2)
+CHAT_PATHS = ["pocketchat/chat.py", "pocketchat/routes.py"]
+README_PATHS = ["README.md"]
+PARALLEL_WORKERS = 2
 
 
-def assessment(verdict: str, questions: list[str]) -> dict[str, Any]:
+def assessment(verdict: str, questions: list[str], touched_paths: list[str]) -> dict[str, Any]:
     return {
         "verdict": verdict,
         "effort": "XS",
         "risk": "tests",
         "blockers": [],
         "plan": "Read the file the issue names and make the smallest change that satisfies it.",
-        "touched_paths": ["pocketchat/chat.py"],
+        "touched_paths": touched_paths,
         "questions": questions,
         "confidence": "high",
     }
@@ -64,10 +68,10 @@ def delivery(summary: str, questions: list[str], status: str) -> dict[str, Any]:
 
 def write_assistant_plans(binaries: Path) -> None:
     verdicts = {
-        "1": result(assessment("execute", []), ASSESSOR_COST),
-        "2": result(assessment("execute", []), ASSESSOR_COST),
-        "3": result(assessment("needs_input", ["Which rating scale?"]), ASSESSOR_COST),
-        "default": result(assessment("skip", []), ASSESSOR_COST),
+        "1": result(assessment("execute", [], CHAT_PATHS), ASSESSOR_COST),
+        "2": result(assessment("execute", [], README_PATHS), ASSESSOR_COST),
+        "3": result(assessment("needs_input", ["Which rating scale?"], CHAT_PATHS), ASSESSOR_COST),
+        "default": result(assessment("skip", [], []), ASSESSOR_COST),
     }
     (binaries / "claude-responses.json").write_text(json.dumps(verdicts))
     restarted = "GREETING = 'Hello'\n\n\ndef restart() -> str:\n    return GREETING\n"
@@ -108,15 +112,35 @@ def affordable(document: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@pytest.fixture
-def workspace(tmp_path: Path, binaries: Path) -> Workspace:
+def in_parallel(document: dict[str, Any]) -> dict[str, Any]:
+    cheap = affordable(document)
+    return {
+        **cheap,
+        "budget": {**cheap["budget"], "max_tasks": PARALLEL_WORKERS},
+        "worker": {**cheap.get("worker", {}), "parallel": PARALLEL_WORKERS},
+    }
+
+
+def prepared_workspace(
+    tmp_path: Path, adjust: Callable[[dict[str, Any]], dict[str, Any]]
+) -> Workspace:
     root = tmp_path / "workspace"
     assert main(["--home", str(root), "init", "--demo", "--example", str(EXAMPLES)]) == EXIT_OK
     workspace = Workspace(root=root)
     workspace.config_path.write_text(
-        yaml.safe_dump(affordable(yaml.safe_load(workspace.config_path.read_text())))
+        yaml.safe_dump(adjust(yaml.safe_load(workspace.config_path.read_text())))
     )
     workspace.oauth_token_path.write_text(OAUTH_TOKEN)
     workspace.oauth_token_path.chmod(SECRET_MODE)
     assert main(["--home", str(root), "demo", "up", "--repo-key", REPO_KEY]) == EXIT_OK
     return workspace
+
+
+@pytest.fixture
+def workspace(tmp_path: Path, binaries: Path) -> Workspace:
+    return prepared_workspace(tmp_path, affordable)
+
+
+@pytest.fixture
+def parallel_workspace(tmp_path: Path, binaries: Path) -> Workspace:
+    return prepared_workspace(tmp_path, in_parallel)

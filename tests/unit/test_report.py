@@ -7,8 +7,17 @@ from tests.unit.conftest import (
     build_run_state,
     build_task,
 )
-from weekend_loop.models import Blocker, Effort, RepoMode, Risk, RunState, TaskStatus, Verdict
-from weekend_loop.report import assessed_tasks, render_triage_plan
+from weekend_loop.models import (
+    Blocker,
+    Effort,
+    RepoMode,
+    Risk,
+    RunState,
+    SoloReason,
+    TaskStatus,
+    Verdict,
+)
+from weekend_loop.report import assessed_tasks, render_digest, render_triage_plan
 
 SLUG = "owner/repo"
 
@@ -81,3 +90,39 @@ def test_issues_filtered_before_assessment_are_listed_with_their_reason() -> Non
     plan = render_triage_plan(build_state(), SLUG)
     filtered_section = plan.split("## Filtered out before assessment")[1]
     assert "| #13 | never_label | Move to a monorepo \\| now |" in filtered_section
+
+
+def worked_state(waves: list[tuple[int, int | None, SoloReason | None]]) -> RunState:
+    tasks = [
+        build_task(
+            number,
+            f"issue {number}",
+            TaskStatus.REVIEW,
+            ELIGIBLE,
+            build_assessment(Verdict.EXECUTE, Effort.XS, Risk.TESTS, [], []),
+        ).model_copy(update={"wave": wave, "solo_reason": reason})
+        for number, wave, reason in waves
+    ]
+    return build_run_state(tasks, 2.4, [], "20260918-210000-demo", "demo", RepoMode.EXECUTE)
+
+
+def test_the_digest_lists_the_waves_and_why_a_task_ran_alone() -> None:
+    digest = render_digest(
+        worked_state(
+            [
+                (12, 1, None),
+                (13, 1, None),
+                (11, 2, SoloReason.SHARED_PATH),
+                (14, 3, SoloReason.NO_TOUCHED_PATHS),
+            ]
+        ),
+        SLUG,
+    )
+    waves_section = digest.split("## Waves")[1]
+    assert "- wave 1: #12, #13" in waves_section
+    assert "- wave 2: #11 (alone: it touches a shared path)" in waves_section
+    assert "- wave 3: #14 (alone: its assessment names no paths)" in waves_section
+
+
+def test_a_run_that_worked_one_task_at_a_time_has_no_waves_to_list() -> None:
+    assert "## Waves" not in render_digest(worked_state([(12, None, None)]), SLUG)
