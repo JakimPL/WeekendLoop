@@ -72,6 +72,9 @@ the budget cannot cover another one. It writes the plan, the run state, the even
 If the worker asks a question instead of guessing, the tree stays clean and nothing is committed.
 `execute` pushes nothing. That is `publish`'s job.
 
+With `worker.parallel` above 1, `execute` works several tasks at once, each on its own branch in a
+worktree of its own. [Working in parallel](#working-in-parallel) below describes how.
+
 **Consent** comes from labels a person wrote. Issues with `weekend:auto` or `weekend:approved` get
 worked. All others are left alone, and the reason goes in the event log. In the web application you
 can approve a task for one run without changing labels.
@@ -121,7 +124,7 @@ and repository command, and every `claude` call, reads its input from `/dev/null
 A run stays inside the weekend window in `config.yaml`. By default that is Friday 18:00 to Sunday
 23:59 in the schedule's timezone (`schedule.window`). `weekend` starts only inside the window. Use
 `--ignore-window` to start it anyway, for example on a weekday. When the window closes, no new task
-starts, and a task already running finishes.
+or wave starts, and the tasks already running finish.
 
 ### Limits
 
@@ -130,7 +133,8 @@ Four things limit a run:
 - **Subscription usage.** Preflight refuses to start if the seven-day window has no room for
   another task. `usage.seven_day_ceiling` keeps the run below the limit by the margin in
   `usage.seven_day_reserve`.
-- **The dollar budget.** A task starts only if the budget still covers a whole task.
+- **The dollar budget.** A task starts only if the budget still covers a whole task. In a
+  parallel run, a wave starts only when the budget covers every task in it.
 - **`max_tasks`.** The number of tasks the reviewer can handle on Monday.
 - **The weekend window.**
 
@@ -150,7 +154,8 @@ A run survives its own process. Every step is saved to `run.json` before and aft
 process dies (crash, out-of-memory kill, reboot), the next `weekend` start picks up the open run
 instead of starting a new one. That start can be systemd's restart, the next timer or a manual run.
 
-- A worker that was mid-task resumes its session on the same branch.
+- A worker that was mid-task resumes its session on the same branch, in its own worktree when
+  the run was parallel. Every interrupted task of a parallel run is taken up, one after another.
 - A worker that has already crashed the run twice keeps what is on disk, and the run moves on.
 - Publishing is safe to repeat. A pull request, comment or digest already on GitHub is reused.
 - A run whose deadline passed while it was down publishes only what it finished.
@@ -159,6 +164,45 @@ instead of starting a new one. That start can be systemd's restart, the next tim
 
 The schedule is under `schedule:` in `config.yaml`. It sets the weekday, hour and minute of each
 run, the command to run (`prepare` or `weekend`), the timezone and the repository key.
+
+## Working in parallel
+
+`worker.parallel` sets how many tasks a run works at once. Above 1, `execute` takes the approved
+tasks in their usual order and groups them into waves: a task joins the wave being formed when the
+paths its assessment names are disjoint from everything the wave already touches, and otherwise
+starts the next wave. A task that touches one of `worker.shared_paths`, or whose assessment names
+no paths, takes a wave of its own. The rule the waves keep is that two tasks in one wave never
+change the same hand-written file, and the assessor's `touched_paths` is what they keep it with.
+
+Each task in a wave works on its own branch in a git worktree of its own under
+`<workspace>/work/<repo>-worktrees/<branch>`, made from the base branch with the setup commands run
+inside it; the worker, the gate and the hidden acceptance test all run there. The worktrees go when
+the wave ends, and the branches stay for `publish`. A wave holds at most `worker.parallel` tasks
+and starts only when the dollar budget covers every task in it; what the budget leaves out waits
+for the next wave. `max_tasks` counts across waves, the allowance is probed once before each wave,
+and the weekend window is checked between waves. Every task records the wave it ran in, and the
+reason when a rule made it run alone; the digest lists the waves.
+
+After a wave, the run compares what each branch actually changed. When two tasks of one wave
+changed the same hand-written file, both record it, the digest lists the pair under "Merge with
+care", and their pull requests carry "[merge care]" in the title and name each other in the body.
+They are still published; merge them one at a time and run the tests after each.
+
+At merge time, take every branch of a wave: their hand-written changes are disjoint by
+construction. For a shared file such as a generated catalog, a docs table or a list of routes,
+take both sides and regenerate what is generated. For a "[merge care]" pair, merge one, run the
+tests, then merge the other.
+
+### Writing issues that parallelise well
+
+- Name the files the work will change, tests and docs included. The assessor turns them into
+  `touched_paths`, and the waves come from that list.
+- Keep the issues of one batch disjoint. Two issues that change the same file take turns, and a
+  batch of issues on one file runs one at a time.
+- Name the registries the change appends to, such as a changelog, a generated index or a table in
+  the docs, and list them under `worker.shared_paths`, so an issue that touches one runs alone.
+- State acceptance as checkbox lines. The assessor reads them as the goal, and the reviewer checks
+  the branch against them.
 
 ## Running under systemd
 
@@ -245,6 +289,15 @@ agent's transcript as it arrives:
 It also prints new events, with a short header each time the run moves to another activity. It ends
 by itself when the run finishes or its process is gone. Press Ctrl-C to leave at any time. The run
 carries on.
+
+In a parallel run, `status` lists every task in flight: the `now:` line names the call that
+started most recently, and one `also:` line follows for each other task being worked. `watch`
+follows the transcript of that most recent call and prints a header when it changes. To follow one
+task from start to finish, tail its own transcript:
+
+```
+tail -f <workspace>/state/runs/<run-id>/tasks/<issue>/worker-1.jsonl
+```
 
 The run page of `weekend-loop web` shows the same in its live card: the last 30 transcript lines
 and the last 10 events, refreshed every 10 seconds while the run is alive. It links to the full

@@ -85,8 +85,9 @@ When the triage looks right, set `mode: execute` and let a weekend run.
 **Thursday.** `weekend-loop prepare` reads the backlog and asks its questions as comments on the
 issues, so you can answer from your phone.
 
-**Friday night.** `weekend-loop weekend` uses that triage and works the approved issues one at a
-time within its budget. It stops when the queue is empty, the budget is spent or the weekend ends.
+**Friday night.** `weekend-loop weekend` uses that triage and works the approved issues within its
+budget, one at a time unless you let it run several at once. It stops when the queue is empty, the
+budget is spent or the weekend ends.
 
 **Monday.** The draft pull requests are waiting, each linked from its issue, with a digest of what
 happened and what it cost.

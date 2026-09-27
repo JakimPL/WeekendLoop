@@ -52,6 +52,7 @@ weekend_loop/worker.py      one credential-less `claude -p` per approved task, u
 weekend_loop/gate.py        diff policy, secret scan and the repository's own verification commands
 weekend_loop/acceptance.py  hidden tests the worker never sees, run against the delivered branch
 weekend_loop/execute.py     the execute phase: consent, branch, worker, commit, gate, ledger
+weekend_loop/waves.py       groups the approved tasks into waves whose touched paths are disjoint
 weekend_loop/publish.py     the publish phase: push, draft pull request, comment, label, digest
 weekend_loop/session.py     one unattended weekend: triage, the approved work, the digest
 weekend_loop/prepare.py     the mid-week round: triage, the questions on each issue, the alert
@@ -97,6 +98,30 @@ The operator workspace, not the checkout, holds everything a run reads and write
 ~/.weekend-loop/acceptance/        hidden tests the worker never sees
 ~/.weekend-loop/agent-home/        the assistant's own HOME and its two rendered fences
 ~/.weekend-loop/work/<repo>/       the checkout a run works in
+~/.weekend-loop/work/<repo>-worktrees/  one worktree per task while a parallel run works it
 ~/.weekend-loop/state/             run directories, the board, the ledger, the briefing, the logs
 ```
 
+
+## Working in parallel
+
+With `worker.parallel` above 1, the execute phase works several tasks at once. The model:
+
+- One branch per task, `weekend/<n>-<slug>`, on a git worktree of its own under
+  `work/<repo>-worktrees/<branch>`, made from `origin/<base>` with the repository's setup commands
+  run inside it. The worker, the gate and the hidden acceptance test run in that worktree; the
+  shared checkout stays on the base branch, and `publish` pushes from it.
+- Waves scheduled by the assessed `touched_paths`. `waves.py` takes the approved tasks in their
+  execution order and puts a task into the wave being formed when its paths are disjoint from
+  everything the wave already claims; otherwise it starts the next wave. A path covers itself and
+  everything under it. A task that touches a `shared_paths` entry, or whose assessment names no
+  paths, takes a wave of its own. Two tasks in one wave never change the same hand-written file.
+- `worker.shared_paths` for files many tasks append to: a changelog, a generated catalog, a docs
+  table, a list of routes. A task that touches one runs alone, so the additions land one after
+  another; at merge the operator takes both sides and regenerates what is generated.
+- A check after the fact. The gate records the files each branch actually changed; when two tasks
+  of one wave changed the same hand-written file, both record the overlap, the digest lists the
+  pair under "Merge with care", and the pull request title carries "[merge care]". Publishing goes
+  ahead; the reviewer merges such branches one at a time.
+- One lock on the run's records. Every write to `run.json`, the events, the ledger and the pulse
+  goes through it, and the pulse lists every task in flight.

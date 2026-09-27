@@ -96,10 +96,11 @@ repos:
 By default, the worker reads the code and follows it: the style of the files it edits, the existing
 test framework and the recent commit subjects.
 
-## Working several issues at once
+## Working in parallel
 
 By default a run works its approved issues one at a time, in one checkout. `worker.parallel` lets
-it work several at once, each in its own git worktree under `work/<repo>-worktrees/`:
+it work several at once, each on its own branch in a git worktree of its own under
+`work/<repo>-worktrees/`:
 
 ```yaml
 worker:
@@ -109,12 +110,14 @@ worker:
     - "docs/generated/**"
 ```
 
-Issues run at once only when the paths their assessments name are disjoint. A path covers itself
-and everything under it, so an issue that names a directory waits for every issue that names a
-file inside it, and the other way round. `shared_paths` names files that many issues change, such
-as a changelog or a generated table; an issue that touches one of them runs alone, as does an issue
-whose assessment names no paths at all. [docs/operating.md](operating.md) describes how a run in
-waves behaves and how to watch it.
+Issues run at once only when the paths their assessments name are disjoint: two issues worked at
+once never change the same hand-written file. A path covers itself and everything under it, so an
+issue that names a directory waits for every issue that names a file inside it, and the other way
+round. `shared_paths` names files that many issues append to, such as a changelog, a generated
+catalog or a table in the docs; an issue that touches one of them runs alone, as does an issue
+whose assessment names no paths at all. Files like these are appended to, never rewritten.
+[docs/operating.md](operating.md#working-in-parallel) describes how a run in waves behaves, what to
+do at merge time, and how to write issues that parallelise well.
 
 ## Prompt overrides
 
