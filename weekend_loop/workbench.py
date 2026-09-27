@@ -21,6 +21,7 @@ PRESERVED_ENTRIES: Final[tuple[str, ...]] = (".venv",)
 BRANCH_SLUG_CHARACTERS: Final[int] = 40
 INHERITED_ENVIRONMENT_KEYS: Final[tuple[str, ...]] = ("PATH", "HOME", "LANG", "LC_ALL", "TZ")
 ASKPASS_SCRIPT: Final[str] = f'#!/bin/sh\nprintf "%s" "${TOKEN_VARIABLE}"\n'
+WORKTREE_LIST_PREFIX: Final[str] = "worktree "
 
 
 def clone_url(repo: RepoTarget, state_directory: Path) -> str:
@@ -88,15 +89,27 @@ def clone_repository(
     )
 
 
-def reset_to_base(repo: RepoTarget, workbench: Path, environment: dict[str, str]) -> None:
+def base_reference(repo: RepoTarget) -> str:
+    return f"origin/{repo.base_branch}"
+
+
+def fetch_base(repo: RepoTarget, workbench: Path, environment: dict[str, str]) -> None:
     run_git(["fetch", "origin", repo.base_branch], cwd=workbench, environment=environment)
+
+
+def clean_working_tree(workbench: Path, environment: dict[str, str]) -> None:
+    exclusions = [argument for entry in PRESERVED_ENTRIES for argument in ("-e", entry)]
+    run_git(["clean", "-fdx", *exclusions], cwd=workbench, environment=environment)
+
+
+def reset_to_base(repo: RepoTarget, workbench: Path, environment: dict[str, str]) -> None:
+    fetch_base(repo, workbench, environment)
     run_git(
-        ["checkout", "-B", repo.base_branch, f"origin/{repo.base_branch}"],
+        ["checkout", "-B", repo.base_branch, base_reference(repo)],
         cwd=workbench,
         environment=environment,
     )
-    exclusions = [argument for entry in PRESERVED_ENTRIES for argument in ("-e", entry)]
-    run_git(["clean", "-fdx", *exclusions], cwd=workbench, environment=environment)
+    clean_working_tree(workbench, environment)
 
 
 def prepare_checkout(repo: RepoTarget, repo_key: str, workspace: Workspace, token: str) -> Path:
@@ -200,3 +213,51 @@ def diff_text(workbench: Path, base_reference: str, environment: dict[str, str])
 def discard_changes(workbench: Path, environment: dict[str, str]) -> None:
     run_git(["checkout", "--", "."], cwd=workbench, environment=environment)
     run_git(["clean", "-fd"], cwd=workbench, environment=environment)
+
+
+def add_worktree(
+    workbench: Path, worktree: Path, branch: str, base: str, environment: dict[str, str]
+) -> None:
+    worktree.parent.mkdir(parents=True, exist_ok=True)
+    run_git(
+        ["worktree", "add", "-B", branch, str(worktree), base],
+        cwd=workbench,
+        environment=environment,
+    )
+
+
+def reset_worktree(worktree: Path, branch: str, base: str, environment: dict[str, str]) -> None:
+    run_git(["checkout", "-B", branch, base], cwd=worktree, environment=environment)
+    clean_working_tree(worktree, environment)
+
+
+def remove_worktree(workbench: Path, worktree: Path, environment: dict[str, str]) -> None:
+    run_git(
+        ["worktree", "remove", "--force", str(worktree)], cwd=workbench, environment=environment
+    )
+
+
+def registered_worktrees(workbench: Path, environment: dict[str, str]) -> list[Path]:
+    listed = run_git(["worktree", "list", "--porcelain"], cwd=workbench, environment=environment)
+    return [
+        Path(line[len(WORKTREE_LIST_PREFIX) :])
+        for line in listed.splitlines()
+        if line.startswith(WORKTREE_LIST_PREFIX)
+    ]
+
+
+def prune_worktrees(
+    workbench: Path, worktrees_root: Path, environment: dict[str, str]
+) -> list[Path]:
+    run_git(["worktree", "prune"], cwd=workbench, environment=environment)
+    root = worktrees_root.resolve()
+    removed = [
+        path
+        for path in registered_worktrees(workbench, environment)
+        if path.resolve().is_relative_to(root)
+    ]
+    for path in removed:
+        remove_worktree(workbench, path, environment)
+    if worktrees_root.exists():
+        shutil.rmtree(worktrees_root)
+    return removed
