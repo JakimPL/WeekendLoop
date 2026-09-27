@@ -255,3 +255,19 @@ def test_the_status_command_prints_the_latest_run(
     assert "dead · pid 4242" in printed
     assert "says: Fixed the bound." in printed
     assert "thinking:" not in printed
+
+
+def test_the_status_lists_every_task_in_flight(tmp_path: Path) -> None:
+    run_directory = seed_run(tmp_path / "state", running_state())
+    earlier = build_activity(ActivityKind.WORKING, 1, None, NOW - timedelta(minutes=5), None)
+    latest = build_activity(ActivityKind.WORKING, 3, None, NOW - timedelta(minutes=2), None)
+    pulse = build_pulse(PID, BOOT_ID, NOW, latest).model_copy(
+        update={"activities": [earlier, latest]}
+    )
+    write_pulse(run_directory, pulse)
+
+    rendered = render_status(load_status(run_directory, 0, 10, NOW, BOOT_ID, always_alive))
+
+    assert "now: working on #3 for 2 min" in rendered
+    assert "also: working on #1 for 5 min" in rendered
+    assert rendered.count("also:") == 1

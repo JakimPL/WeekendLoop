@@ -82,6 +82,7 @@ class RunStatus(Record):
     pid: int | None
     pulse_age_seconds: float | None
     activity: Activity | None
+    activities: list[Activity]
     spent_usd: float
     envelope_usd: float
     usage: UsageReading | None
@@ -159,6 +160,7 @@ def build_status(
         pid=pulse.pid if pulse is not None else None,
         pulse_age_seconds=seconds_between(pulse.heartbeat_at, now) if pulse is not None else None,
         activity=pulse.activity if pulse is not None else None,
+        activities=pulse.activities if pulse is not None else [],
         spent_usd=state.spent_usd,
         envelope_usd=state.envelope_usd,
         usage=state.usage,
@@ -265,6 +267,16 @@ def current_phrase(status: RunStatus) -> str | None:
     return f"{tense}: {activity_phrase(status.activity, status.observed_at)}"
 
 
+def concurrent_phrases(status: RunStatus) -> list[str]:
+    if status.liveness in (Liveness.FINISHED, Liveness.DEAD):
+        return []
+    return [
+        f"also: {activity_phrase(activity, status.observed_at)}"
+        for activity in status.activities
+        if activity != status.activity
+    ]
+
+
 def liveness_phrase(status: RunStatus) -> str:
     parts = [status.liveness.value]
     if status.pid is not None:
@@ -327,6 +339,7 @@ def summary_lines(status: RunStatus) -> list[str]:
         run_title(status),
         liveness_phrase(status),
         *[line for line in optional if line is not None],
+        *concurrent_phrases(status),
     ]
 
 

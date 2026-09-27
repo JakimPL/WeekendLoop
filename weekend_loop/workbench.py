@@ -220,14 +220,14 @@ def add_worktree(
 ) -> None:
     worktree.parent.mkdir(parents=True, exist_ok=True)
     run_git(
-        ["worktree", "add", "-B", branch, str(worktree), base],
+        ["worktree", "add", "--no-track", "-B", branch, str(worktree), base],
         cwd=workbench,
         environment=environment,
     )
 
 
 def reset_worktree(worktree: Path, branch: str, base: str, environment: dict[str, str]) -> None:
-    run_git(["checkout", "-B", branch, base], cwd=worktree, environment=environment)
+    run_git(["checkout", "--no-track", "-B", branch, base], cwd=worktree, environment=environment)
     clean_working_tree(worktree, environment)
 
 

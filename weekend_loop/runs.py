@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
 from itertools import count
 from pathlib import Path
@@ -189,35 +190,48 @@ class RunProgress:
     def __init__(self, run_directory: RunDirectory, state: RunState) -> None:
         self.run_directory = run_directory
         self.state = state
+        self.lock = threading.Lock()
 
     def put_task(self, task: Task) -> None:
-        tasks = [
-            task if kept.issue_number == task.issue_number else kept for kept in self.state.tasks
-        ]
-        self.state = self.state.model_copy(update={"tasks": tasks})
+        with self.lock:
+            tasks = [
+                task if kept.issue_number == task.issue_number else kept
+                for kept in self.state.tasks
+            ]
+            self.state = self.state.model_copy(update={"tasks": tasks})
 
     def task(self, issue_number: int) -> Task:
-        for task in self.state.tasks:
-            if task.issue_number == issue_number:
-                return task
+        with self.lock:
+            for task in self.state.tasks:
+                if task.issue_number == issue_number:
+                    return task
         raise KeyError(f"run {self.state.run_id} has no task for issue #{issue_number}")
 
     def spend(self, usd: float) -> None:
-        self.state = self.state.model_copy(update={"spent_usd": self.state.spent_usd + usd})
+        with self.lock:
+            self.state = self.state.model_copy(update={"spent_usd": self.state.spent_usd + usd})
 
     def observe(self, reading: UsageReading | None) -> None:
-        if reading is not None:
+        if reading is None:
+            return
+        with self.lock:
             self.state = self.state.model_copy(update={"usage": reading})
 
     def note(self, text: str) -> None:
-        self.state = self.state.model_copy(update={"notes": [*self.state.notes, text]})
+        with self.lock:
+            self.state = self.state.model_copy(update={"notes": [*self.state.notes, text]})
 
     def stop(self, reason: StopReason, detail: str) -> None:
-        self.state = self.state.model_copy(update={"stop_reason": reason, "stop_detail": detail})
+        with self.lock:
+            self.state = self.state.model_copy(
+                update={"stop_reason": reason, "stop_detail": detail}
+            )
 
     def enter_phase(self, phase: RunPhase) -> None:
-        self.state = self.state.model_copy(update={"phase": phase})
+        with self.lock:
+            self.state = self.state.model_copy(update={"phase": phase})
 
     def save(self) -> RunState:
-        self.state = save_run_state(self.run_directory, self.state)
-        return self.state
+        with self.lock:
+            self.state = save_run_state(self.run_directory, self.state)
+            return self.state

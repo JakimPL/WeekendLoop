@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import Final
 
 from weekend_loop.acceptance import acceptance_map_path, load_acceptance_map, run_acceptance_test
 from weekend_loop.allowance import await_allowance
-from weekend_loop.attempt import TaskBench, drive_worker, task_prompt, work_on
+from weekend_loop.attempt import BenchKind, TaskBench, drive_worker, task_prompt, work_on
 from weekend_loop.backends import BoardReader, repository_token
 from weekend_loop.briefing import guidance_for, read_briefing
 from weekend_loop.claude_cli import agent_environment, read_oauth_token
@@ -42,15 +43,23 @@ from weekend_loop.records import append_record, write_record
 from weekend_loop.report import EFFORT_ORDER
 from weekend_loop.runs import RunDirectory, RunProgress, append_event, ledger_path
 from weekend_loop.supervision import STOP_DETAIL, Hold, RunSupervisor
+from weekend_loop.waves import Wave, waves_of
 from weekend_loop.workbench import (
+    add_worktree,
+    base_reference,
+    branch_name,
     changed_files_numstat,
     commit_changes,
     commit_count,
     current_branch,
     diff_text,
     discard_changes,
+    fetch_base,
     git_environment,
     prepare_checkout,
+    prune_worktrees,
+    registered_worktrees,
+    remove_worktree,
     run_setup_commands,
     write_askpass_script,
 )
@@ -82,6 +91,8 @@ CONSENT_REASON_TEMPLATE: Final[str] = "consent is {consent}"
 OUTSIDE_LIMITS_REASON: Final[str] = (
     "the assessment is outside the worker's effort, risk or blocker limits"
 )
+SETUP_FAILED_TEMPLATE: Final[str] = "setup command failed: {command}"
+WAVE_DETAIL_TEMPLATE: Final[str] = "wave {number}: {issues}"
 
 
 class ResumeAction(StrEnum):
@@ -213,6 +224,7 @@ def settle(
             f"exit {acceptance.exit_code}",
             issue_number,
         )
+    supervisor.leave(issue_number)
     record_attempt(progress.run_directory, outcome, diff, acceptance)
     write_record(gate, progress.run_directory.task_directory(issue_number) / GATE_FILENAME)
     return finish_task(worked, outcome, gate, acceptance), outcome, halt
@@ -224,9 +236,9 @@ def judge_branch(
     workbench = bench.workbench
     git_settings = bench.git_settings
     commit_changes(workbench, policy.identity, commit_subject(outcome, task.title), git_settings)
-    base_reference = f"origin/{bench.repo.base_branch}"
-    files = parse_numstat(changed_files_numstat(workbench, base_reference, git_settings))
-    diff = diff_text(workbench, base_reference, git_settings)
+    base = base_reference(bench.repo)
+    files = parse_numstat(changed_files_numstat(workbench, base, git_settings))
+    diff = diff_text(workbench, base, git_settings)
     gate = evaluate_gate(
         files,
         diff,
@@ -236,7 +248,7 @@ def judge_branch(
             workbench,
             command_environment(WORKER_ENVIRONMENT),
         ),
-        commit_count(workbench, base_reference, git_settings),
+        commit_count(workbench, base, git_settings),
         policy.worker.max_diff_lines,
         bench.repo.forbidden_paths,
     )
@@ -306,6 +318,7 @@ def prepare_execution(
     token = repository_token(repo)
     workbench = prepare_checkout(repo, repo_key, policy.workspace, token)
     git_settings = git_environment(token, write_askpass_script(policy.state_dir))
+    prune_worktrees(workbench, policy.workspace.worktrees_path(repo_key), git_settings)
     return workbench, git_settings, run_setup_commands(repo, workbench, git_settings)
 
 
@@ -346,7 +359,7 @@ def execute_run(
     acceptance_tests = load_acceptance_map(
         acceptance_map_path(policy.state_dir), policy.workspace.acceptance_dir
     )
-    halt = finish_interrupted_task(
+    halt = finish_interrupted_tasks(
         policy, repo, repo_key, issues, acceptance_tests, supervisor, progress, deadline
     )
     if halt is not None:
@@ -361,14 +374,14 @@ def execute_run(
         progress.stop(StopReason.SETUP_FAILED, note)
         progress.enter_phase(RunPhase.ABORTED)
         return progress.save()
-    bench = task_bench(policy, repo, workbench, git_settings)
+    bench = task_bench(policy, repo, workbench, git_settings, BenchKind.CHECKOUT)
     return work_through(
-        policy, bench, approved, issues, progress, acceptance_tests, supervisor, deadline
+        policy, bench, repo_key, approved, issues, progress, acceptance_tests, supervisor, deadline
     )
 
 
 def task_bench(
-    policy: Policy, repo: RepoTarget, workbench: Path, git_settings: dict[str, str]
+    policy: Policy, repo: RepoTarget, workbench: Path, git_settings: dict[str, str], kind: BenchKind
 ) -> TaskBench:
     return TaskBench(
         repo=repo,
@@ -380,7 +393,22 @@ def task_bench(
             read_oauth_token(policy.workspace.oauth_token_path),
             WORKER_ENVIRONMENT,
         ),
+        kind=kind,
     )
+
+
+def worktree_for(policy: Policy, bench: TaskBench, repo_key: str, issue: Issue) -> TaskBench:
+    branch = branch_name(policy.worker.branch_prefix, issue.number, issue.title)
+    worktree = policy.workspace.worktree_path(repo_key, branch)
+    add_worktree(bench.workbench, worktree, branch, base_reference(bench.repo), bench.git_settings)
+    return bench.model_copy(update={"workbench": worktree, "kind": BenchKind.WORKTREE})
+
+
+def worktree_in_use(workbench: Path, worktree: Path, git_settings: dict[str, str]) -> bool:
+    if not (workbench / ".git").is_dir() or not worktree.is_dir():
+        return False
+    registered = {path.resolve() for path in registered_worktrees(workbench, git_settings)}
+    return worktree.resolve() in registered
 
 
 def resume_action(
@@ -408,7 +436,25 @@ def recorded_outcome(run_directory: RunDirectory, task: Task) -> WorkerOutcome:
     )
 
 
-def finish_interrupted_task(
+def interrupted_bench(
+    policy: Policy, repo: RepoTarget, repo_key: str, task: Task
+) -> tuple[TaskBench, bool]:
+    git_settings = git_environment(repository_token(repo), write_askpass_script(policy.state_dir))
+    workbench = policy.workspace.workbench_path(repo_key)
+    if task.branch is not None:
+        worktree = policy.workspace.worktree_path(repo_key, task.branch)
+        if (
+            worktree_in_use(workbench, worktree, git_settings)
+            and current_branch(worktree, git_settings) == task.branch
+        ):
+            return task_bench(policy, repo, worktree, git_settings, BenchKind.WORKTREE), True
+    on_task_branch = (workbench / ".git").is_dir() and current_branch(
+        workbench, git_settings
+    ) == task.branch
+    return task_bench(policy, repo, workbench, git_settings, BenchKind.CHECKOUT), on_task_branch
+
+
+def finish_interrupted_tasks(
     policy: Policy,
     repo: RepoTarget,
     repo_key: str,
@@ -419,17 +465,34 @@ def finish_interrupted_task(
     deadline: datetime,
 ) -> Halt | None:
     working = [task for task in progress.state.tasks if task.status is TaskStatus.WORKING]
-    if not working:
-        return None
-    task = working[0]
-    token = repository_token(repo)
-    workbench = policy.workspace.workbench_path(repo_key)
-    git_settings = git_environment(token, write_askpass_script(policy.state_dir))
-    bench = task_bench(policy, repo, workbench, git_settings)
+    for task in working:
+        halt = finish_interrupted_task(
+            policy, repo, repo_key, task, issues, acceptance_tests, supervisor, progress, deadline
+        )
+        if halt is not None:
+            return halt
+    return None
+
+
+def release_bench(policy: Policy, repo_key: str, bench: TaskBench) -> None:
+    if bench.kind is BenchKind.WORKTREE:
+        workbench = policy.workspace.workbench_path(repo_key)
+        remove_worktree(workbench, bench.workbench, bench.git_settings)
+
+
+def finish_interrupted_task(
+    policy: Policy,
+    repo: RepoTarget,
+    repo_key: str,
+    task: Task,
+    issues: dict[int, Issue],
+    acceptance_tests: dict[int, Path],
+    supervisor: RunSupervisor,
+    progress: RunProgress,
+    deadline: datetime,
+) -> Halt | None:
+    bench, on_task_branch = interrupted_bench(policy, repo, repo_key, task)
     issue = issues.get(task.issue_number)
-    on_task_branch = (workbench / ".git").is_dir() and current_branch(
-        workbench, git_settings
-    ) == task.branch
     calls_allowed = (
         issue is not None and datetime.now(UTC) < deadline and not supervisor.stop_requested()
     )
@@ -453,6 +516,7 @@ def finish_interrupted_task(
             policy, bench, task.issue_number, outcome, None, acceptance_tests, supervisor, progress
         )
         record_finished(policy, progress, updated)
+        release_bench(policy, repo_key, bench)
         return halt
     if issue is None:
         raise ValueError(f"issue #{task.issue_number} needs its issue to carry on")
@@ -501,6 +565,7 @@ def finish_interrupted_task(
             progress,
         )
     record_finished(policy, progress, updated)
+    release_bench(policy, repo_key, bench)
     return halt if halt is not None else outcome_halt(outcome.outcome)
 
 
@@ -548,42 +613,80 @@ def worked_count(state: RunState) -> int:
     return sum(1 for task in state.tasks if task.status in WORKED_STATUSES)
 
 
-def work_through(
+def work_task(
     policy: Policy,
     bench: TaskBench,
-    approved: list[Task],
+    task: Task,
+    issue: Issue,
+    answers: list[str],
+    acceptance_tests: dict[int, Path],
+    supervisor: RunSupervisor,
+    progress: RunProgress,
+    deadline: datetime,
+    observed_costs: list[float],
+) -> tuple[Task, Halt | None]:
+    updated, outcome, halt = run_task(
+        policy,
+        bench,
+        task,
+        issue,
+        answers,
+        acceptance_tests,
+        supervisor,
+        progress,
+        deadline,
+        observed_costs,
+    )
+    record_finished(policy, progress, updated)
+    return updated, halt if halt is not None else outcome_halt(outcome.outcome)
+
+
+def allowance_halt(
+    policy: Policy,
+    bench: TaskBench,
+    progress: RunProgress,
+    supervisor: RunSupervisor,
+    deadline: datetime,
+    observed_costs: list[float],
+) -> Halt | None:
+    verdict = await_allowance(
+        policy,
+        supervisor,
+        bench.workbench,
+        bench.environment,
+        deadline,
+        progress.state.usage,
+        None,
+        observed_costs,
+    )
+    progress.spend(verdict.spent_usd)
+    progress.observe(verdict.reading)
+    if verdict.proceed:
+        return None
+    append_event(progress.run_directory, EventType.LIMIT_REACHED, verdict.detail, None)
+    return Halt(reason=verdict.stop_reason or StopReason.ALLOWANCE, detail=verdict.detail)
+
+
+def work_in_turn(
+    policy: Policy,
+    bench: TaskBench,
+    queue: list[Task],
     issues: dict[int, Issue],
     progress: RunProgress,
     acceptance_tests: dict[int, Path],
     supervisor: RunSupervisor,
     deadline: datetime,
-) -> RunState:
+) -> Halt | None:
     observed_costs: list[float] = []
-    capacity = max(policy.budget.max_tasks - worked_count(progress.state), 0)
-    halt: Halt | None = None
-    for task in approved[:capacity]:
-        halt = before_task(policy, progress, supervisor, deadline)
-        if halt is not None:
-            break
-        verdict = await_allowance(
-            policy,
-            supervisor,
-            bench.workbench,
-            bench.environment,
-            deadline,
-            progress.state.usage,
-            None,
-            observed_costs,
+    for task in queue:
+        halt = before_task(policy, progress, supervisor, deadline) or allowance_halt(
+            policy, bench, progress, supervisor, deadline, observed_costs
         )
-        progress.spend(verdict.spent_usd)
-        progress.observe(verdict.reading)
-        if not verdict.proceed:
-            halt = Halt(reason=verdict.stop_reason or StopReason.ALLOWANCE, detail=verdict.detail)
-            append_event(progress.run_directory, EventType.LIMIT_REACHED, verdict.detail, None)
-            break
+        if halt is not None:
+            return halt
         inbox = read_inbox(progress.run_directory.inbox)
         briefing = read_briefing(policy.state_dir, progress.state.repo_key)
-        updated, outcome, halt = run_task(
+        _, halt = work_task(
             policy,
             bench,
             task,
@@ -595,11 +698,167 @@ def work_through(
             deadline,
             observed_costs,
         )
-        record_finished(policy, progress, updated)
-        halt = halt if halt is not None else outcome_halt(outcome.outcome)
         if halt is not None:
             append_event(progress.run_directory, EventType.LIMIT_REACHED, halt.detail, None)
-            break
+            return halt
+    return None
+
+
+def affordable_task_count(policy: Policy, spent_usd: float) -> int:
+    return int((policy.budget.envelope_usd - spent_usd) // policy.budget.per_task_usd)
+
+
+def next_wave(policy: Policy, spent_usd: float, queue: list[Task]) -> Wave:
+    wave = waves_of(queue, policy.worker.shared_paths)[0]
+    size = min(len(wave.tasks), policy.worker.parallel, affordable_task_count(policy, spent_usd))
+    return wave.model_copy(update={"tasks": wave.tasks[:size]})
+
+
+def open_worktrees(
+    policy: Policy,
+    bench: TaskBench,
+    repo_key: str,
+    tasks: list[Task],
+    issues: dict[int, Issue],
+    progress: RunProgress,
+) -> tuple[list[TaskBench], Halt | None]:
+    fetch_base(bench.repo, bench.workbench, bench.git_settings)
+    benches: list[TaskBench] = []
+    for task in tasks:
+        worktree_bench = worktree_for(policy, bench, repo_key, issues[task.issue_number])
+        benches.append(worktree_bench)
+        setup = run_setup_commands(bench.repo, worktree_bench.workbench, bench.git_settings)
+        failed = [result for result in setup if result.exit_code != 0]
+        if failed:
+            note = SETUP_FAILED_TEMPLATE.format(command=failed[0].command)
+            append_event(progress.run_directory, EventType.RUN_ABORTED, note, task.issue_number)
+            progress.note(note)
+            close_worktrees(policy, bench, repo_key)
+            return [], Halt(reason=StopReason.SETUP_FAILED, detail=note)
+    return benches, None
+
+
+def close_worktrees(policy: Policy, bench: TaskBench, repo_key: str) -> None:
+    prune_worktrees(bench.workbench, policy.workspace.worktrees_path(repo_key), bench.git_settings)
+
+
+def wave_detail(number: int, tasks: list[Task]) -> str:
+    issues = ", ".join(f"#{task.issue_number}" for task in tasks)
+    return WAVE_DETAIL_TEMPLATE.format(number=number, issues=issues)
+
+
+def run_wave(
+    policy: Policy,
+    bench: TaskBench,
+    repo_key: str,
+    wave: Wave,
+    number: int,
+    issues: dict[int, Issue],
+    progress: RunProgress,
+    acceptance_tests: dict[int, Path],
+    supervisor: RunSupervisor,
+    deadline: datetime,
+    observed_costs: list[float],
+) -> Halt | None:
+    tasks = [
+        task.model_copy(update={"wave": number, "solo_reason": wave.solo_reason})
+        for task in wave.tasks
+    ]
+    for task in tasks:
+        progress.put_task(task)
+    progress.save()
+    append_event(progress.run_directory, EventType.WAVE_STARTED, wave_detail(number, tasks), None)
+    benches, halt = open_worktrees(policy, bench, repo_key, tasks, issues, progress)
+    if halt is not None:
+        return halt
+    inbox = read_inbox(progress.run_directory.inbox)
+    briefing = read_briefing(policy.state_dir, progress.state.repo_key)
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = [
+            pool.submit(
+                work_task,
+                policy,
+                worktree_bench,
+                task,
+                issues[task.issue_number],
+                guidance_for(inbox, briefing, task),
+                acceptance_tests,
+                supervisor,
+                progress,
+                deadline,
+                observed_costs,
+            )
+            for task, worktree_bench in zip(tasks, benches, strict=True)
+        ]
+        halts = [halt for _, halt in (future.result() for future in futures) if halt is not None]
+    close_worktrees(policy, bench, repo_key)
+    if halts:
+        append_event(progress.run_directory, EventType.LIMIT_REACHED, halts[0].detail, None)
+        return halts[0]
+    return None
+
+
+def work_in_waves(
+    policy: Policy,
+    bench: TaskBench,
+    repo_key: str,
+    queue: list[Task],
+    issues: dict[int, Issue],
+    progress: RunProgress,
+    acceptance_tests: dict[int, Path],
+    supervisor: RunSupervisor,
+    deadline: datetime,
+) -> Halt | None:
+    observed_costs: list[float] = []
+    number = 0
+    while queue:
+        halt = before_task(policy, progress, supervisor, deadline) or allowance_halt(
+            policy, bench, progress, supervisor, deadline, observed_costs
+        )
+        if halt is not None:
+            return halt
+        number += 1
+        wave = next_wave(policy, progress.state.spent_usd, queue)
+        queue = queue[len(wave.tasks) :]
+        halt = run_wave(
+            policy,
+            bench,
+            repo_key,
+            wave,
+            number,
+            issues,
+            progress,
+            acceptance_tests,
+            supervisor,
+            deadline,
+            observed_costs,
+        )
+        if halt is not None:
+            return halt
+    return None
+
+
+def work_through(
+    policy: Policy,
+    bench: TaskBench,
+    repo_key: str,
+    approved: list[Task],
+    issues: dict[int, Issue],
+    progress: RunProgress,
+    acceptance_tests: dict[int, Path],
+    supervisor: RunSupervisor,
+    deadline: datetime,
+) -> RunState:
+    capacity = max(policy.budget.max_tasks - worked_count(progress.state), 0)
+    queue = approved[:capacity]
+    if policy.worker.parallel > 1:
+        halt = work_in_waves(
+            policy, bench, repo_key, queue, issues, progress, acceptance_tests, supervisor, deadline
+        )
+    else:
+        halt = work_in_turn(
+            policy, bench, queue, issues, progress, acceptance_tests, supervisor, deadline
+        )
     return close_execution(progress, halt, approved, capacity)
 
 

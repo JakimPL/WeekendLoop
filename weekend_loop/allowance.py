@@ -45,7 +45,9 @@ def probe(
 ) -> ClaudeResult:
     transcript = supervisor.transcript_for(PROBE_TRANSCRIPT_ROLE, None)
     supervisor.enter(ActivityKind.PROBING, None, transcript, None)
-    return read_usage(policy, workbench, environment, supervisor, transcript)
+    result = read_usage(policy, workbench, environment, supervisor, transcript)
+    supervisor.leave(None)
+    return result
 
 
 def await_allowance(

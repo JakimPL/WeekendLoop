@@ -151,6 +151,7 @@ def assess_issue(
         context.environment,
         supervisor,
     )
+    supervisor.leave(issue.number)
     assessment = assessment_from_result(result)
     return AssessmentOutcome(
         issue_number=issue.number,

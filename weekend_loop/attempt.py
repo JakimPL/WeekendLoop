@@ -23,7 +23,13 @@ from weekend_loop.models import (
 )
 from weekend_loop.runs import RunProgress, append_event
 from weekend_loop.supervision import RunSupervisor
-from weekend_loop.workbench import branch_name, create_task_branch, reset_to_base
+from weekend_loop.workbench import (
+    base_reference,
+    branch_name,
+    create_task_branch,
+    reset_to_base,
+    reset_worktree,
+)
 from weekend_loop.worker import WorkerCall, WorkerPrompts, render_task, run_worker
 
 TASK_FILENAME: Final[str] = "TASK.md"
@@ -38,12 +44,18 @@ class WorkerStep(StrEnum):
     START_FRESH = "start_fresh"
 
 
+class BenchKind(StrEnum):
+    CHECKOUT = "checkout"
+    WORKTREE = "worktree"
+
+
 class TaskBench(Record):
     repo: RepoTarget
     prompts: WorkerPrompts
     workbench: Path
     git_settings: dict[str, str]
     environment: dict[str, str]
+    kind: BenchKind
 
 
 def next_worker_step(outcome: ClaudeOutcome, stall_resumes: int, fresh_used: bool) -> WorkerStep:
@@ -73,12 +85,19 @@ def branch_of(task: Task) -> str:
     return task.branch
 
 
+def place_on_branch(bench: TaskBench, branch: str) -> None:
+    if bench.kind is BenchKind.WORKTREE:
+        reset_worktree(bench.workbench, branch, base_reference(bench.repo), bench.git_settings)
+        return
+    reset_to_base(bench.repo, bench.workbench, bench.git_settings)
+    create_task_branch(bench.workbench, branch, bench.git_settings)
+
+
 def start_branch(
     policy: Policy, bench: TaskBench, task: Task, issue: Issue, progress: RunProgress
 ) -> Task:
     branch = branch_name(policy.worker.branch_prefix, issue.number, issue.title)
-    reset_to_base(bench.repo, bench.workbench, bench.git_settings)
-    create_task_branch(bench.workbench, branch, bench.git_settings)
+    place_on_branch(bench, branch)
     started = task.model_copy(
         update={"status": TaskStatus.WORKING, "branch": branch, "session_id": str(uuid.uuid4())}
     )
@@ -115,6 +134,7 @@ def call_worker(
         supervisor,
         task.issue_number,
     )
+    supervisor.leave(task.issue_number)
     progress.put_task(
         task.model_copy(
             update={
