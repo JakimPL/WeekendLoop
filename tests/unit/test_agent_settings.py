@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from weekend_loop.fences import NO_FORBIDDEN_PATHS, fence_tokens, render_fence
-from weekend_loop.models import Workspace
+from weekend_loop.fences import fence_tokens, render_fence
+from weekend_loop.models import DEFAULT_FORBIDDEN_PATHS, Workspace
 from weekend_loop.resources import FenceName, fence_template_text
 
 OPERATOR_HOME = Path("/operator-home")
@@ -28,7 +28,7 @@ def worker_settings(tmp_path: Path) -> dict[str, Any]:
         fence_template_text(FenceName.WORKER),
         tmp_path / "settings.json",
         fence_tokens(Workspace(root=tmp_path), OPERATOR_HOME),
-        NO_FORBIDDEN_PATHS,
+        list(DEFAULT_FORBIDDEN_PATHS),
     )
     settings: dict[str, Any] = json.loads(fence.read_text())
     return settings

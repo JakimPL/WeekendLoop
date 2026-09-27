@@ -96,6 +96,33 @@ repos:
 By default, the worker reads the code and follows it: the style of the files it edits, the existing
 test framework and the recent commit subjects.
 
+## Forbidden paths
+
+`repos.<key>.forbidden_paths` names the files the worker leaves alone. They are held twice: the
+worker's fence denies its Edit and Write tools on them, and the gate refuses a branch whose diff
+touches one. The default list is the repository's own machinery: `.github/**`, `**/.env` and
+`**/.env.*`, `**/pyproject.toml`, `**/uv.lock`, `**/Makefile`, `**/.pre-commit-config.yaml` and
+`config/**`. A repository that states its own list replaces the default, so name everything you
+want kept and leave out what the worker must be able to change, such as a `config/` folder that
+holds authored content:
+
+```yaml
+repos:
+  myrepo:
+    forbidden_paths:
+      - ".github/**"
+      - "**/.env"
+      - "**/.env.*"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "frontend/package.json"
+```
+
+A pattern that starts with `**/` matches at the root as well as below it. The rest of the fence
+stays whatever the list says: the worker never runs `git`, `gh`, `make`, `pre-commit`, a package
+manager or a network tool, and never reads the operator's credentials or the workspace's secrets
+and state.
+
 ## Working in parallel
 
 By default a run works its approved issues one at a time, in one checkout. `worker.parallel` lets

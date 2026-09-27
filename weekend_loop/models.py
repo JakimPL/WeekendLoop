@@ -33,7 +33,16 @@ ASSESSOR_FENCE_NAME: Final[str] = "assessor.settings.json"
 OAUTH_TOKEN_NAME: Final[str] = "claude-oauth.token"
 REPOSITORY_TOKEN_TEMPLATE: Final[str] = "github-{repo_key}.token"
 ALERT_WEBHOOK_NAME: Final[str] = "alert-webhook.url"
-DEFAULT_FORBIDDEN_PATHS: Final[tuple[str, ...]] = (".github/**", "**/.env", "**/.env.*")
+DEFAULT_FORBIDDEN_PATHS: Final[tuple[str, ...]] = (
+    ".github/**",
+    "**/.env",
+    "**/.env.*",
+    "**/pyproject.toml",
+    "**/uv.lock",
+    "**/Makefile",
+    "**/.pre-commit-config.yaml",
+    "config/**",
+)
 DEFAULT_ENVELOPE_USD: Final[float] = 15.0
 DEFAULT_PER_TASK_USD: Final[float] = 6.0
 DEFAULT_ASSESSOR_USD: Final[float] = 0.5

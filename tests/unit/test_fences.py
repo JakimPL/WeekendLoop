@@ -13,7 +13,7 @@ from weekend_loop.fences import (
     render_fence,
     render_fences,
 )
-from weekend_loop.models import Workspace
+from weekend_loop.models import DEFAULT_FORBIDDEN_PATHS, Workspace
 from weekend_loop.resources import FenceName, ResourceKind, fence_template_text, packaged_text
 
 OPERATOR_HOME = Path("/operator-home")
@@ -110,3 +110,29 @@ def test_the_worker_fence_denies_the_paths_the_repository_forbids(tmp_path: Path
     denied = json.loads(workspace.worker_fence.read_text())["permissions"]["deny"]
     assert "Edit(docs/generated/**)" in denied
     assert "Write(Makefile)" in denied
+
+
+def test_the_shipped_worker_fence_leaves_every_path_to_forbidden_paths(tmp_path: Path) -> None:
+    fence = render_fence(
+        fence_template_text(FenceName.WORKER),
+        tmp_path / "settings.json",
+        tokens_for(tmp_path),
+        NO_FORBIDDEN_PATHS,
+    )
+    denied = json.loads(fence.read_text())["permissions"]["deny"]
+    assert not [rule for rule in denied if rule.startswith(("Edit(", "Write("))]
+
+
+def test_the_default_forbidden_paths_keep_the_project_machinery(tmp_path: Path) -> None:
+    workspace = Workspace(root=tmp_path)
+    render_fences(workspace, OPERATOR_HOME, list(DEFAULT_FORBIDDEN_PATHS))
+    denied = json.loads(workspace.worker_fence.read_text())["permissions"]["deny"]
+    for path in (
+        ".github/**",
+        "**/pyproject.toml",
+        "**/uv.lock",
+        "**/Makefile",
+        "**/.pre-commit-config.yaml",
+        "config/**",
+    ):
+        assert f"Edit({path})" in denied and f"Write({path})" in denied
