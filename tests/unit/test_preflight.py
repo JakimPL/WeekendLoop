@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -12,7 +13,9 @@ from weekend_loop.preflight import (
     check_usage_credits,
     check_usage_headroom,
     check_weekly_reset,
+    probe_outcome,
     run_preflight,
+    status_of,
 )
 
 USAGE = UsagePolicy(
@@ -168,3 +171,25 @@ def test_an_allowance_nobody_could_read_clears_the_run() -> None:
 def test_an_allowance_reading_from_a_window_that_reset_clears_the_run() -> None:
     stale = build_reading(0.99, NOW - timedelta(minutes=1), False)
     assert check_usage_headroom(stale, USAGE, NOW).outcome is CheckOutcome.PASSED
+
+
+def test_the_write_probe_reads_the_status_from_the_answer_body() -> None:
+    error = subprocess.CalledProcessError(
+        1, ["gh"], output='{"message": "probe", "status": "403"}', stderr=""
+    )
+    assert status_of(error) == "403"
+
+
+def test_the_write_probe_reads_the_status_from_the_message_when_the_body_is_empty() -> None:
+    error = subprocess.CalledProcessError(
+        1, ["gh"], output="", stderr="gh: Object does not exist (HTTP 422)"
+    )
+    assert status_of(error) == "422"
+    silent = subprocess.CalledProcessError(1, ["gh"], output="", stderr="")
+    assert status_of(silent) == "unknown"
+
+
+def test_a_probe_answer_names_what_the_token_can_do() -> None:
+    assert probe_outcome("422") is True
+    assert probe_outcome("403") is False
+    assert probe_outcome("404") is None

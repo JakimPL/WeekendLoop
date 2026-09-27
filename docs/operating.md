@@ -8,10 +8,32 @@ You need to set up two things yourself:
    mode 0600.
 2. Install `socat` next to `bwrap`. The sandbox needs it for networking. Without root, run
    `apt-get download socat` and unpack it with `dpkg -x` into `~/.local`. Or ask an administrator.
+3. On Ubuntu 24.04 and later, let `bwrap` create user namespaces. The kernel setting
+   `kernel.apparmor_restrict_unprivileged_userns` keeps a process without a profile from doing so,
+   and preflight then warns "sandbox namespace: bwrap: loopback: Failed RTM_NEWADDR". A profile
+   that allows them, loaded once, settles it:
+
+   ```
+   sudo tee /etc/apparmor.d/bwrap >/dev/null <<'EOF'
+   abi <abi/4.0>,
+   include <tunables/global>
+   profile bwrap /usr/bin/bwrap flags=(unconfined) {
+     userns,
+     include if exists <local/bwrap>
+   }
+   EOF
+   sudo apparmor_parser -r /etc/apparmor.d/bwrap
+   ```
 
 A repository on the `github` backend also needs a fine-grained token with read and write access to
 Contents, Issues, Pull requests, Workflows and Metadata. Save it as
-`<workspace>/secrets/github-<repo-key>.token`.
+`<workspace>/secrets/github-<repo-key>.token`. While the repository stays in `dry_run`, keep
+Contents at read: preflight refuses a token that can push, so a dry run is unable to change
+anything, and raise it to read and write when you switch to `execute`. Preflight learns what the
+token can do by attempting a write that cannot succeed, a branch at a commit that does not exist,
+and reading the answer: a refusal means read-only, a validation error means the token can push.
+The repository's `permissions` field would only describe the account, which for an owner always
+reads as push.
 
 `weekend-loop preflight --repo-key <key>` lists what is still missing. No phase starts until
 everything is in place.

@@ -124,6 +124,10 @@ def log_body(arguments):
 data = json.loads((here / "gh-data.json").read_text())
 if arguments[:2] == ["api", "user"]:
     print(data["login"])
+elif arguments[:3] == ["api", "-X", "POST"] and arguments[3].endswith("/git/refs"):
+    status = data.get("probe_status") or ("422" if data["push"] else "403")
+    print(json.dumps({"message": "probe", "status": status}))
+    raise SystemExit(1)
 elif arguments[:1] == ["api"] and arguments[1].startswith("repos/"):
     print(json.dumps(data["push"]))
 elif arguments[:2] == ["pr", "list"]:

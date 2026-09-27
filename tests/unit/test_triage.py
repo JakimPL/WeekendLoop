@@ -17,6 +17,7 @@ from tests.unit.conftest import (
 from weekend_loop.cli import EXIT_BLOCKED, main
 from weekend_loop.models import RunState, TaskStatus
 from weekend_loop.policy import policy_at
+from weekend_loop.preflight import ABSENT_COMMIT, PROBE_REFERENCE
 from weekend_loop.runs import latest_run_id, open_run_directory
 
 TEMPLATE_BODY = (
@@ -125,6 +126,18 @@ def test_every_assessment_is_recorded_with_its_own_file_and_event(
     ]
 
 
+WRITE_PROBE = [
+    "api",
+    "-X",
+    "POST",
+    "repos/example-org/example-repo/git/refs",
+    "-f",
+    f"ref={PROBE_REFERENCE}",
+    "-f",
+    f"sha={ABSENT_COMMIT}",
+]
+
+
 def test_a_dry_run_only_reads_from_github_and_fences_every_assessment(
     tmp_path: Path, fake_binaries: Path, fake_git: Path
 ) -> None:
@@ -132,7 +145,8 @@ def test_a_dry_run_only_reads_from_github_and_fences_every_assessment(
     main(["--home", str(policy_path), "triage", "--repo-key", "dryrun"])
     for call in read_calls(fake_binaries / "gh-calls.jsonl"):
         if call[0] == "api":
-            assert call[1] in ("user", "repos/example-org/example-repo")
+            reads = ("user", "repos/example-org/example-repo")
+            assert call[1] in reads or call == WRITE_PROBE, call
         else:
             assert tuple(call[:2]) in READ_ONLY_VERBS, call
     assessments = [

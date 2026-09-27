@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime
@@ -45,7 +46,11 @@ PROBE_TRANSCRIPT_FILENAME: Final[str] = "preflight-probe.jsonl"
 SECRET_FILE_MODE_MASK: Final[int] = 0o077
 VERSION_TIMEOUT_SECONDS: Final[int] = 20
 DETAIL_TAIL_CHARACTERS: Final[int] = 200
-PERMISSION_QUERY: Final[str] = ".permissions.push"
+PROBE_REFERENCE: Final[str] = "refs/heads/weekend-loop/preflight-probe"
+ABSENT_COMMIT: Final[str] = "0" * 40
+WRITABLE_STATUS: Final[str] = "422"
+READ_ONLY_STATUS: Final[str] = "403"
+STATUS_PATTERN: Final[re.Pattern[str]] = re.compile(r"\(HTTP (\d{3})\)")
 SANDBOX_PROBE: Final[tuple[str, ...]] = (
     "bwrap",
     "--unshare-user",
@@ -221,16 +226,55 @@ def check_repository_access(repo: RepoTarget, state_directory: Path) -> Prefligh
     except (FileNotFoundError, ValueError) as error:
         return failed(name, True, str(error))
     reader = GitHubReader(repo.slug, token, state_directory / CONFIG_DIRECTORY_NAME)
-    try:
-        can_push = reader.run(["api", f"repos/{repo.slug}", "--jq", PERMISSION_QUERY]).strip()
-    except subprocess.CalledProcessError as error:
-        return failed(name, True, error.stderr.strip()[-DETAIL_TAIL_CHARACTERS:])
-    writable = can_push == "true"
+    status = write_probe_status(reader, repo.slug)
+    writable = probe_outcome(status)
+    if writable is None:
+        detail = f"the write probe answered HTTP {status}; the token cannot reach the repository"
+        return failed(name, True, detail)
     if repo.mode is RepoMode.DRY_RUN and writable:
         return failed(name, True, "the token can push to a dry-run repository; scope it read-only")
     if repo.mode is RepoMode.EXECUTE and not writable:
         return failed(name, True, "the token cannot push to an execute repository")
-    return passed(name, True, f"push={can_push}, mode={repo.mode.value}")
+    return passed(name, True, f"push={str(writable).lower()}, mode={repo.mode.value}")
+
+
+def write_probe_status(reader: GitHubReader, slug: str) -> str:
+    arguments = [
+        "api",
+        "-X",
+        "POST",
+        f"repos/{slug}/git/refs",
+        "-f",
+        f"ref={PROBE_REFERENCE}",
+        "-f",
+        f"sha={ABSENT_COMMIT}",
+    ]
+    try:
+        reader.run(arguments)
+    except subprocess.CalledProcessError as error:
+        return status_of(error)
+    return WRITABLE_STATUS
+
+
+def status_of(error: subprocess.CalledProcessError) -> str:
+    body = error.stdout or ""
+    try:
+        answered = json.loads(body)
+    except json.JSONDecodeError:
+        answered = {}
+    status = answered.get("status") if isinstance(answered, dict) else None
+    if isinstance(status, str):
+        return status
+    match = STATUS_PATTERN.search(error.stderr or "")
+    return match.group(1) if match else "unknown"
+
+
+def probe_outcome(status: str) -> bool | None:
+    if status == WRITABLE_STATUS:
+        return True
+    if status == READ_ONLY_STATUS:
+        return False
+    return None
 
 
 def github_checks(repo: RepoTarget, repo_key: str, state_directory: Path) -> list[PreflightCheck]:
