@@ -33,8 +33,10 @@ While the repository is private, git asks for your GitHub username and a persona
 the assistant's home and the state of every run. Use `--home` or `WEEKEND_LOOP_HOME` to put it
 somewhere else.
 
-Next, run `claude setup-token` and save the output to `~/.weekend-loop/secrets/claude-oauth.token`.
-Make the file readable only by you.
+Next, run `claude setup-token`. It signs you in through the browser and then prints a long-lived
+token on a line of its own, after "Your OAuth token". Save that one line to
+`~/.weekend-loop/secrets/claude-oauth.token` and make the file readable only by you. The command
+is interactive, so redirecting its output saves the whole dialogue, which preflight refuses.
 
 ## Try the example first
 

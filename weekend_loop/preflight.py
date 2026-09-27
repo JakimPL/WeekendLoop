@@ -115,11 +115,26 @@ def check_settings_file(name: str, path: Path, required: bool) -> PreflightCheck
     return passed(name, required, str(path))
 
 
+def check_oauth_token(name: str, path: Path, required: bool) -> PreflightCheck:
+    secret = check_secret_file(name, path, required)
+    if secret.outcome is not CheckOutcome.PASSED:
+        return secret
+    try:
+        read_oauth_token(path)
+    except ValueError as error:
+        return failed(name, required, str(error))
+    return secret
+
+
 def probe_reading(policy: Policy) -> UsageReading | None:
     token_path = policy.workspace.oauth_token_path
     if not token_path.is_file():
         return None
-    environment = agent_environment(policy.agent_home, read_oauth_token(token_path), {})
+    try:
+        token = read_oauth_token(token_path)
+    except ValueError:
+        return None
+    environment = agent_environment(policy.agent_home, token, {})
     transcript = policy.state_dir / PROBE_TRANSCRIPT_FILENAME
     return read_usage(policy, policy.agent_home, environment, UNWATCHED, transcript).usage
 
@@ -302,7 +317,7 @@ def run_preflight(
         check_binary("setpriv", SETPRIV_BINARY, True),
         check_binary("timeout", TIMEOUT_BINARY, True),
         check_state_directory(policy.state_dir),
-        check_secret_file("claude oauth token", policy.workspace.oauth_token_path, True),
+        check_oauth_token("claude oauth token", policy.workspace.oauth_token_path, True),
         check_settings_file("assessor settings", policy.settings.assessor, True),
         check_settings_file("worker settings", policy.settings.worker, writes),
         *[check_binary(f"sandbox {binary}", binary, writes) for binary in SANDBOX_BINARIES],

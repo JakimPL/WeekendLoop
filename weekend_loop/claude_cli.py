@@ -175,12 +175,21 @@ def agent_environment(agent_home: Path, oauth_token: str, extra: dict[str, str])
     return environment
 
 
+ONE_LINE_TOKEN_HINT: Final[str] = (
+    'keep only the token itself, the line `claude setup-token` prints after "Your OAuth token"'
+)
+
+
 def read_oauth_token(path: Path) -> str:
     if not path.is_file():
         raise FileNotFoundError(f"Claude token file {path} is missing")
     token = path.read_text().strip()
     if not token:
         raise ValueError(f"Claude token file {path} is empty")
+    if any(character.isspace() for character in token):
+        raise ValueError(
+            f"Claude token file {path} holds more than the token; {ONE_LINE_TOKEN_HINT}"
+        )
     return token
 
 

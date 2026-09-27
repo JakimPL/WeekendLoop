@@ -4,10 +4,14 @@ import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from tests.unit.conftest import issue_payload, write_github_data, write_test_policy
+from weekend_loop.claude_cli import read_oauth_token
 from weekend_loop.models import BudgetPolicy, CheckOutcome, UsagePolicy, UsageReading, UsageWindow
 from weekend_loop.policy import policy_at
 from weekend_loop.preflight import (
+    check_oauth_token,
     check_secret_file,
     check_settings_file,
     check_usage_credits,
@@ -193,3 +197,32 @@ def test_a_probe_answer_names_what_the_token_can_do() -> None:
     assert probe_outcome("422") is True
     assert probe_outcome("403") is False
     assert probe_outcome("404") is None
+
+
+DIALOGUE = " Your OAuth token:\n\n sk-ant-oat01-example\n\n Store this token somewhere safe.\n"
+
+
+def test_a_token_file_holding_the_setup_dialogue_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "claude-oauth.token"
+    path.write_text(DIALOGUE)
+    path.chmod(0o600)
+    with pytest.raises(ValueError, match="more than the token"):
+        read_oauth_token(path)
+    assert check_oauth_token("claude oauth token", path, True).outcome is CheckOutcome.FAILED
+    path.write_text("sk-ant-oat01-example\n")
+    assert read_oauth_token(path) == "sk-ant-oat01-example"
+    assert check_oauth_token("claude oauth token", path, True).outcome is CheckOutcome.PASSED
+
+
+def test_a_token_file_holding_the_setup_dialogue_blocks_preflight(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy = policy_at(prepare_environment(tmp_path, fake_binaries, push=False))
+    policy.workspace.oauth_token_path.write_text(DIALOGUE)
+    report = run_preflight(policy, "dryrun", NOW, None)
+    failures = [
+        check.name
+        for check in report.checks
+        if check.outcome is CheckOutcome.FAILED and check.required
+    ]
+    assert failures == ["claude oauth token"]

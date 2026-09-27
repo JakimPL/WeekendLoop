@@ -4,8 +4,9 @@
 
 You need to set up two things yourself:
 
-1. Run `claude setup-token` and save the result to `<workspace>/secrets/claude-oauth.token` with
-   mode 0600.
+1. Run `claude setup-token` and save the one line it prints after "Your OAuth token" to
+   `<workspace>/secrets/claude-oauth.token` with mode 0600. The command is interactive, so
+   redirecting its output saves the whole dialogue, which preflight refuses.
 2. Install `socat` next to `bwrap`. The sandbox needs it for networking. Without root, run
    `apt-get download socat` and unpack it with `dpkg -x` into `~/.local`. Or ask an administrator.
 3. On Ubuntu 24.04 and later, let `bwrap` create user namespaces. The kernel setting
