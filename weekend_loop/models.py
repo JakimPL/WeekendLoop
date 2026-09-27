@@ -16,6 +16,7 @@ MAX_QUESTIONS_PER_ASSESSMENT: Final[int] = 3
 DEFAULT_BASE_BRANCH: Final[str] = "main"
 DEFAULT_BRANCH_PREFIX: Final[str] = "weekend/"
 DEFAULT_IDLE_MINUTES: Final[int] = 15
+DEFAULT_PARALLEL_WORKERS: Final[int] = 1
 REPOSITORY_SLUG_PATTERN: Final[str] = r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
 CONFIG_FILENAME: Final[str] = "config.yaml"
 REFERENCE_FILENAME: Final[str] = "config.reference.yaml"
@@ -24,6 +25,7 @@ PROMPTS_DIRECTORY_NAME: Final[str] = "prompts"
 ACCEPTANCE_DIRECTORY_NAME: Final[str] = "acceptance"
 AGENT_HOME_NAME: Final[str] = "agent-home"
 WORK_DIRECTORY_NAME: Final[str] = "work"
+WORKTREES_SUFFIX: Final[str] = "-worktrees"
 STATE_DIRECTORY_NAME: Final[str] = "state"
 CLAUDE_DIRECTORY_NAME: Final[str] = ".claude"
 WORKER_FENCE_NAME: Final[str] = "settings.json"
@@ -143,6 +145,11 @@ class TaskStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class SoloReason(StrEnum):
+    SHARED_PATH = "shared_path"
+    NO_TOUCHED_PATHS = "no_touched_paths"
+
+
 class RunPhase(StrEnum):
     PREFLIGHT = "preflight"
     TRIAGE = "triage"
@@ -237,6 +244,7 @@ class EventType(StrEnum):
     TASK_STARTED = "task_started"
     TASK_RESUMED = "task_resumed"
     TASK_SKIPPED = "task_skipped"
+    WAVE_STARTED = "wave_started"
     WORKER_FINISHED = "worker_finished"
     GATE_FINISHED = "gate_finished"
     ACCEPTANCE_FINISHED = "acceptance_finished"
@@ -417,6 +425,8 @@ class Task(Record):
     worker_cost_usd: float = 0.0
     resumes: int = 0
     published_at: datetime | None = None
+    wave: int | None = None
+    solo_reason: SoloReason | None = None
 
 
 class UsageWindow(Record):
@@ -476,6 +486,7 @@ class Pulse(Record):
     boot_id: str
     heartbeat_at: datetime
     activity: Activity | None
+    activities: list[Activity] = Field(default_factory=list)
 
 
 class LedgerEntry(Record):
@@ -760,6 +771,8 @@ class WorkerPolicy(ConfigSection):
         default_factory=lambda: list(DEFAULT_ALLOWED_RISK), min_length=1
     )
     branch_prefix: str = DEFAULT_BRANCH_PREFIX
+    parallel: int = Field(default=DEFAULT_PARALLEL_WORKERS, ge=1)
+    shared_paths: list[str] = Field(default_factory=list)
 
 
 class LabelPolicy(ConfigSection):
@@ -927,6 +940,12 @@ class Workspace(Record):
 
     def workbench_path(self, repo_key: str) -> Path:
         return self.work_dir / repo_key
+
+    def worktrees_path(self, repo_key: str) -> Path:
+        return self.work_dir / f"{repo_key}{WORKTREES_SUFFIX}"
+
+    def worktree_path(self, repo_key: str, branch: str) -> Path:
+        return self.worktrees_path(repo_key) / branch
 
 
 class Policy(ConfigSection):

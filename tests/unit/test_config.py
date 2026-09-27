@@ -13,6 +13,7 @@ from weekend_loop.config_view import default_keys, reference_document, resolved_
 from weekend_loop.models import (
     DEFAULT_ENVELOPE_USD,
     DEFAULT_LABEL_NAMESPACE,
+    DEFAULT_PARALLEL_WORKERS,
     Issue,
     IssueComment,
     PullRequest,
@@ -109,6 +110,43 @@ def test_the_reference_document_carries_every_section() -> None:
     printed = reference_document()
     for section in ("repos", "identity", "schedule", "budget", "usage", "models", "labels"):
         assert f"{section}:" in printed
+    assert f"parallel: {DEFAULT_PARALLEL_WORKERS}" in printed
+    assert "shared_paths: []" in printed
+
+
+def test_a_run_works_one_issue_at_a_time_until_the_operator_says_otherwise(
+    tmp_path: Path,
+) -> None:
+    policy = policy_at(workspace_with(tmp_path, MINIMAL_CONFIG))
+    assert policy.worker.parallel == DEFAULT_PARALLEL_WORKERS
+    assert policy.worker.shared_paths == []
+
+
+def test_the_operator_names_how_many_issues_run_at_once_and_which_paths_they_share(
+    tmp_path: Path,
+) -> None:
+    document = {
+        **MINIMAL_CONFIG,
+        "worker": {"parallel": 3, "shared_paths": ["CHANGELOG.md", "docs/generated/**"]},
+    }
+    worker = policy_at(workspace_with(tmp_path, document)).worker
+    assert worker.parallel == 3
+    assert worker.shared_paths == ["CHANGELOG.md", "docs/generated/**"]
+
+
+def test_fewer_than_one_worker_at_a_time_is_refused(tmp_path: Path) -> None:
+    document = {**MINIMAL_CONFIG, "worker": {"parallel": 0}}
+    with pytest.raises(ConfigError, match="worker.parallel"):
+        policy_at(workspace_with(tmp_path, document))
+
+
+def test_worktrees_live_beside_the_checkout_of_their_repository(tmp_path: Path) -> None:
+    workspace = Workspace(root=tmp_path)
+    assert workspace.worktrees_path("myrepo") == tmp_path / "work" / "myrepo-worktrees"
+    assert (
+        workspace.worktree_path("myrepo", "weekend/7-slug")
+        == tmp_path / "work" / "myrepo-worktrees" / "weekend" / "7-slug"
+    )
 
 
 def test_the_config_command_refuses_a_broken_file_without_a_traceback(

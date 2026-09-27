@@ -175,6 +175,7 @@ def removable_paths(policy: Policy, repo: RepoTarget, repo_key: str) -> list[Pat
     return [
         board_directory(policy.state_dir, repo.slug),
         policy.workspace.workbench_path(repo_key),
+        policy.workspace.worktrees_path(repo_key),
         policy.state_dir / RUNS_DIRECTORY_NAME,
         acceptance_map_path(policy.state_dir),
         ledger_path(policy.state_dir),

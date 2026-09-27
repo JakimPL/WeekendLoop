@@ -96,6 +96,26 @@ repos:
 By default, the worker reads the code and follows it: the style of the files it edits, the existing
 test framework and the recent commit subjects.
 
+## Working several issues at once
+
+By default a run works its approved issues one at a time, in one checkout. `worker.parallel` lets
+it work several at once, each in its own git worktree under `work/<repo>-worktrees/`:
+
+```yaml
+worker:
+  parallel: 2              # how many issues run at once; 1 keeps the single checkout
+  shared_paths:            # files many issues append to; an issue that touches one runs alone
+    - "CHANGELOG.md"
+    - "docs/generated/**"
+```
+
+Issues run at once only when the paths their assessments name are disjoint. A path covers itself
+and everything under it, so an issue that names a directory waits for every issue that names a
+file inside it, and the other way round. `shared_paths` names files that many issues change, such
+as a changelog or a generated table; an issue that touches one of them runs alone, as does an issue
+whose assessment names no paths at all. [docs/operating.md](operating.md) describes how a run in
+waves behaves and how to watch it.
+
 ## Prompt overrides
 
 To replace a built-in prompt, put a file with the same name in `<workspace>/prompts/`:

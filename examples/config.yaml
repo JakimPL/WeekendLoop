@@ -53,6 +53,8 @@ worker:
   allowed_effort: [XS, S]
   allowed_risk: [docs, tests, refactor, behaviour]
   branch_prefix: weekend/
+  parallel: 1
+  shared_paths: []
 
 labels:
   auto: "weekend:auto"
