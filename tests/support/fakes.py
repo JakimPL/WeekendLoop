@@ -51,6 +51,8 @@ def next_plan(path):
 
 
 prompt = value_after("-p") or ""
+match = re.search(r"issue #(\\d+)", prompt)
+issue = match.group(1) if match is not None else "default"
 if prompt.startswith("Reply with the single word"):
     probe = here / "claude-probe.json"
     if probe.is_file():
@@ -63,6 +65,8 @@ if prompt.startswith("Reply with the single word"):
     raise SystemExit(0)
 if "acceptEdits" in arguments:
     plan = next_plan(here / "claude-worker.json")
+    if "files" not in plan:
+        plan = plan[issue] if issue in plan else plan["default"]
     for name, content in plan["files"].items():
         target = Path.cwd() / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -81,11 +85,9 @@ if "acceptEdits" in arguments:
     if plan.get("forget_sessions"):
         sessions.unlink(missing_ok=True)
     raise SystemExit(plan["exit_code"])
-match = re.search(r"issue #(\\d+)", prompt)
 responses_path = here / "claude-responses.json"
 responses = json.loads(responses_path.read_text())
-key = match.group(1) if match is not None else "default"
-key = key if key in responses else "default"
+key = issue if issue in responses else "default"
 response = responses[key]
 if isinstance(response, list):
     if len(response) > 1:

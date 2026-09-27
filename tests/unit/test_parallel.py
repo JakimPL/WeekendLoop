@@ -14,6 +14,8 @@ from tests.unit.conftest import (
     build_task,
     delivery_payload,
     issue_payload,
+    worker_plan,
+    worker_result,
     write_github_data,
     write_policy,
     write_worker_plan,
@@ -41,6 +43,7 @@ from weekend_loop.backends import repository_token
 from weekend_loop.mailbox import request_stop
 from weekend_loop.models import (
     Effort,
+    Overlap,
     Policy,
     RepoMode,
     Risk,
@@ -52,6 +55,8 @@ from weekend_loop.models import (
     Verdict,
 )
 from weekend_loop.policy import policy_at, repo_target
+from weekend_loop.publish import pull_request_title
+from weekend_loop.report import render_digest
 from weekend_loop.runs import (
     create_run_directory,
     load_run_state,
@@ -68,8 +73,11 @@ from weekend_loop.workbench import (
 )
 
 REPO_KEY: Final[str] = "demo"
+SLUG: Final[str] = "example-org/example-board"
 RECORDS_PATH: Final[str] = "logbook/records.py"
 README_PATH: Final[str] = "README.md (new)"
+README_FILE: Final[str] = "README.md"
+FIX_SUBJECT: Final[str] = "fix(records): treat an empty speed as unknown"
 CHANGELOG_PATH: Final[str] = "CHANGELOG.md"
 NOTE_SETUP: Final[str] = """#!/usr/bin/env python3
 import os
@@ -156,6 +164,16 @@ def prepare_parallel(
     return policy, policy_path
 
 
+def write_plans_by_issue(fake_binaries: Path, files_by_issue: dict[int, dict[str, str]]) -> None:
+    delivery = delivery_payload("done", FIX_SUBJECT, [])
+    plans = {
+        str(number): worker_plan(files, [worker_result(delivery, 1.2, "done")], 0)
+        for number, files in files_by_issue.items()
+    }
+    fallback = next(iter(plans.values()))
+    (fake_binaries / "claude-worker.json").write_text(json.dumps({**plans, "default": fallback}))
+
+
 def latest(policy: Policy) -> RunState:
     return load_run_state(open_run_directory(policy.state_dir, RUN_ID))
 
@@ -182,11 +200,19 @@ def test_tasks_with_disjoint_paths_share_a_wave_each_on_its_own_worktree(
     policy, policy_path = prepare_parallel(
         tmp_path, fake_binaries, {1: [RECORDS_PATH], 2: [README_PATH]}, 2, [], 3, 15.0
     )
+    write_plans_by_issue(
+        fake_binaries, {1: {RECORDS_PATH: FIXED_RECORDS}, 2: {README_FILE: "# Logbook\n"}}
+    )
     assert execute(policy_path) == 0
     state = latest(policy)
     assert [task.status for task in state.tasks] == [TaskStatus.REVIEW, TaskStatus.REVIEW]
     assert [task.wave for task in state.tasks] == [1, 1]
     assert [task.solo_reason for task in state.tasks] == [None, None]
+    assert [task.overlaps for task in state.tasks] == [[], []]
+    assert [task.gate.changed_paths for task in state.tasks if task.gate is not None] == [
+        [RECORDS_PATH],
+        [README_FILE],
+    ]
     assert len(worker_calls(fake_binaries)) == 2
     assert "wave_started: wave 1: #1, #2" in events_of(policy)
 
@@ -312,3 +338,61 @@ def test_a_task_interrupted_in_its_worktree_resumes_there(
         open_run_directory(policy.state_dir, RUN_ID).task_directory(1) / "diff.patch"
     ).read_text()
     assert "strip()" in diff
+
+
+def test_tasks_of_one_wave_that_changed_the_same_file_are_flagged_for_the_reviewer(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare_parallel(
+        tmp_path, fake_binaries, {1: [RECORDS_PATH], 2: [README_PATH]}, 2, [], 3, 15.0
+    )
+    assert execute(policy_path) == 0
+    state = latest(policy)
+    first, second = state.tasks
+    assert [task.status for task in state.tasks] == [TaskStatus.REVIEW, TaskStatus.REVIEW]
+    assert first.overlaps == [Overlap(issue_number=2, paths=[RECORDS_PATH])]
+    assert second.overlaps == [Overlap(issue_number=1, paths=[RECORDS_PATH])]
+    assert f"overlap_found: #1 and #2 both changed {RECORDS_PATH}" in events_of(policy)
+    digest = render_digest(state, SLUG)
+    assert f"- #1 and #2 both changed {RECORDS_PATH}: merge them one at a time" in digest
+    assert pull_request_title(first) == f"{FIX_SUBJECT} [merge care]"
+    assert pull_request_title(second) == f"{FIX_SUBJECT} [merge care]"
+
+
+def test_a_file_the_operator_shares_is_no_reason_for_care(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare_parallel(
+        tmp_path, fake_binaries, {1: [RECORDS_PATH], 2: [README_PATH]}, 2, ["CHANGELOG.md"], 3, 15.0
+    )
+    write_plans_by_issue(
+        fake_binaries,
+        {
+            1: {RECORDS_PATH: FIXED_RECORDS, "CHANGELOG.md": "- fixed the speed\n"},
+            2: {README_FILE: "# Logbook\n", "CHANGELOG.md": "- wrote the readme\n"},
+        },
+    )
+    assert execute(policy_path) == 0
+    state = latest(policy)
+    assert [task.status for task in state.tasks] == [TaskStatus.REVIEW, TaskStatus.REVIEW]
+    assert [task.overlaps for task in state.tasks] == [[], []]
+    assert not any(event.startswith("overlap_found") for event in events_of(policy))
+
+
+def test_a_branch_the_gate_refused_is_no_partner_for_merge_care(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare_parallel(
+        tmp_path, fake_binaries, {1: [RECORDS_PATH], 2: [README_PATH]}, 2, [], 3, 15.0
+    )
+    write_plans_by_issue(
+        fake_binaries,
+        {
+            1: {RECORDS_PATH: FIXED_RECORDS},
+            2: {RECORDS_PATH: FIXED_RECORDS, ".github/workflows/evil.yml": "on: push\n"},
+        },
+    )
+    assert execute(policy_path) == 0
+    state = latest(policy)
+    assert [task.status for task in state.tasks] == [TaskStatus.REVIEW, TaskStatus.ABANDONED]
+    assert [task.overlaps for task in state.tasks] == [[], []]

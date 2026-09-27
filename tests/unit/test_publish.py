@@ -30,7 +30,7 @@ from weekend_loop.github import (
     url_from_output,
 )
 from weekend_loop.guards import assert_branch_allowed, assert_labels_allowed
-from weekend_loop.models import Effort, Policy, Risk, TaskStatus, Verdict
+from weekend_loop.models import Effort, Overlap, Policy, Risk, TaskStatus, Verdict
 from weekend_loop.publish import (
     publishable,
     pull_request_body,
@@ -271,3 +271,17 @@ def test_the_pull_request_title_falls_back_to_the_issue_title() -> None:
     )
     assert pull_request_title(task) == "weekend: Empty speed field"
     assert "Refs #1" in pull_request_body(task, "run-7", FOOTER)
+
+
+def test_a_branch_that_changed_a_file_with_a_wave_sibling_says_so_in_the_pull_request() -> None:
+    task = build_task(
+        1,
+        "Empty speed field",
+        TaskStatus.REVIEW,
+        ELIGIBLE,
+        build_assessment(Verdict.EXECUTE, Effort.XS, Risk.TESTS, [], []),
+    ).model_copy(update={"overlaps": [Overlap(issue_number=2, paths=["logbook/records.py"])]})
+    assert pull_request_title(task) == "weekend: Empty speed field [merge care]"
+    body = pull_request_body(task, "run-7", FOOTER)
+    assert "## Merge with care" in body
+    assert "This branch and #2 changed the same files: logbook/records.py." in body

@@ -39,11 +39,12 @@ from weekend_loop.models import (
     Verdict,
     WorkerOutcome,
 )
+from weekend_loop.publish import publishable
 from weekend_loop.records import append_record, write_record
 from weekend_loop.report import EFFORT_ORDER
 from weekend_loop.runs import RunDirectory, RunProgress, append_event, ledger_path
 from weekend_loop.supervision import STOP_DETAIL, Hold, RunSupervisor
-from weekend_loop.waves import Wave, waves_of
+from weekend_loop.waves import Wave, overlaps_within, waves_of
 from weekend_loop.workbench import (
     add_worktree,
     base_reference,
@@ -93,6 +94,7 @@ OUTSIDE_LIMITS_REASON: Final[str] = (
 )
 SETUP_FAILED_TEMPLATE: Final[str] = "setup command failed: {command}"
 WAVE_DETAIL_TEMPLATE: Final[str] = "wave {number}: {issues}"
+OVERLAP_DETAIL_TEMPLATE: Final[str] = "#{first} and #{second} both changed {paths}"
 
 
 class ResumeAction(StrEnum):
@@ -742,6 +744,28 @@ def close_worktrees(policy: Policy, bench: TaskBench, repo_key: str) -> None:
     prune_worktrees(bench.workbench, policy.workspace.worktrees_path(repo_key), bench.git_settings)
 
 
+def changed_paths_of(task: Task) -> list[str]:
+    return task.gate.changed_paths if task.gate is not None else []
+
+
+def note_overlaps(policy: Policy, progress: RunProgress, tasks: list[Task]) -> None:
+    finished = [progress.task(task.issue_number) for task in tasks]
+    changed = {task.issue_number: changed_paths_of(task) for task in finished if publishable(task)}
+    found = overlaps_within(changed, policy.worker.shared_paths)
+    for task in finished:
+        if task.issue_number in found:
+            progress.put_task(task.model_copy(update={"overlaps": found[task.issue_number]}))
+    if found:
+        progress.save()
+    for number, overlaps in found.items():
+        for overlap in overlaps:
+            if number < overlap.issue_number:
+                detail = OVERLAP_DETAIL_TEMPLATE.format(
+                    first=number, second=overlap.issue_number, paths=", ".join(overlap.paths)
+                )
+                append_event(progress.run_directory, EventType.OVERLAP_FOUND, detail, number)
+
+
 def wave_detail(number: int, tasks: list[Task]) -> str:
     issues = ", ".join(f"#{task.issue_number}" for task in tasks)
     return WAVE_DETAIL_TEMPLATE.format(number=number, issues=issues)
@@ -791,6 +815,7 @@ def run_wave(
             for task, worktree_bench in zip(tasks, benches, strict=True)
         ]
         halts = [halt for _, halt in (future.result() for future in futures) if halt is not None]
+    note_overlaps(policy, progress, tasks)
     close_worktrees(policy, bench, repo_key)
     if halts:
         append_event(progress.run_directory, EventType.LIMIT_REACHED, halts[0].detail, None)

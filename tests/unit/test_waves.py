@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from tests.unit.conftest import ELIGIBLE, build_assessment, build_task
-from weekend_loop.models import Effort, Risk, SoloReason, Task, TaskStatus, Verdict
-from weekend_loop.waves import normalised_path, solo_reason_of, waves_of
+from weekend_loop.models import Effort, Overlap, Risk, SoloReason, Task, TaskStatus, Verdict
+from weekend_loop.waves import normalised_path, overlaps_within, solo_reason_of, waves_of
 
 NO_SHARED_PATHS: list[str] = []
 
@@ -118,3 +118,23 @@ def test_a_root_path_keeps_every_other_task_apart() -> None:
 )
 def test_a_touched_path_is_read_the_way_the_assessor_wrote_it(raw: str, expected: str) -> None:
     assert normalised_path(raw) == expected
+
+
+def test_two_tasks_that_changed_the_same_file_are_paired_unless_the_file_is_shared() -> None:
+    changed = {1: ["a.py", "CHANGELOG.md"], 2: ["a.py", "CHANGELOG.md"], 3: ["b.py"]}
+    assert overlaps_within(changed, ["CHANGELOG.md"]) == {
+        1: [Overlap(issue_number=2, paths=["a.py"])],
+        2: [Overlap(issue_number=1, paths=["a.py"])],
+    }
+    assert overlaps_within({1: ["CHANGELOG.md"], 2: ["CHANGELOG.md"]}, ["CHANGELOG.md"]) == {}
+    assert overlaps_within({1: ["a.py"], 2: ["b.py"]}, NO_SHARED_PATHS) == {}
+
+
+def test_every_pair_of_a_wave_is_compared() -> None:
+    changed = {1: ["a.py"], 2: ["b.py"], 3: ["a.py", "b.py"]}
+    found = overlaps_within(changed, NO_SHARED_PATHS)
+    assert found[3] == [
+        Overlap(issue_number=1, paths=["a.py"]),
+        Overlap(issue_number=2, paths=["b.py"]),
+    ]
+    assert found[1] == [Overlap(issue_number=3, paths=["a.py"])]

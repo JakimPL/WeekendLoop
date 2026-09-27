@@ -133,4 +133,5 @@ def evaluate_gate(
         secret_matches=secrets,
         binary_files=binaries,
         commit_count=commits,
+        changed_paths=[changed.path for changed in files],
     )

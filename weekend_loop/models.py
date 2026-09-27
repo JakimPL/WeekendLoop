@@ -245,6 +245,7 @@ class EventType(StrEnum):
     TASK_RESUMED = "task_resumed"
     TASK_SKIPPED = "task_skipped"
     WAVE_STARTED = "wave_started"
+    OVERLAP_FOUND = "overlap_found"
     WORKER_FINISHED = "worker_finished"
     GATE_FINISHED = "gate_finished"
     ACCEPTANCE_FINISHED = "acceptance_finished"
@@ -406,6 +407,12 @@ class GateResult(Record):
     secret_matches: list[str]
     binary_files: list[str]
     commit_count: int
+    changed_paths: list[str] = Field(default_factory=list)
+
+
+class Overlap(Record):
+    issue_number: int
+    paths: list[str]
 
 
 class Task(Record):
@@ -427,6 +434,7 @@ class Task(Record):
     published_at: datetime | None = None
     wave: int | None = None
     solo_reason: SoloReason | None = None
+    overlaps: list[Overlap] = Field(default_factory=list)
 
 
 class UsageWindow(Record):

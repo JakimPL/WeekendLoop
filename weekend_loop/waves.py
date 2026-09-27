@@ -4,7 +4,7 @@ from pathlib import PurePosixPath
 from typing import Final
 
 from weekend_loop.gate import path_matches
-from weekend_loop.models import Record, SoloReason, Task
+from weekend_loop.models import Overlap, Record, SoloReason, Task
 
 NEW_PATH_MARKER: Final[str] = "(new)"
 REPOSITORY_ROOT: Final[str] = ""
@@ -74,3 +74,24 @@ def waves_of(tasks: list[Task], shared_paths: list[str]) -> list[Wave]:
         members.append(task)
         claimed.extend(paths)
     return closed(waves, members)
+
+
+def hand_written(paths: list[str], shared_paths: list[str]) -> set[str]:
+    return {path for path in paths if not any(shared(path, pattern) for pattern in shared_paths)}
+
+
+def overlaps_within(
+    changed: dict[int, list[str]], shared_paths: list[str]
+) -> dict[int, list[Overlap]]:
+    numbers = sorted(changed)
+    found: dict[int, list[Overlap]] = {}
+    for position, first in enumerate(numbers):
+        for second in numbers[position + 1 :]:
+            common = sorted(
+                hand_written(changed[first], shared_paths)
+                & hand_written(changed[second], shared_paths)
+            )
+            if common:
+                found.setdefault(first, []).append(Overlap(issue_number=second, paths=common))
+                found.setdefault(second, []).append(Overlap(issue_number=first, paths=common))
+    return found

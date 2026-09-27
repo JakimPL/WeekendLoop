@@ -244,6 +244,23 @@ def render_wave_line(number: int, tasks: list[Task]) -> str:
     return f"- wave {number}: {members}{suffix}"
 
 
+def render_overlap_lines(state: RunState) -> list[str]:
+    return [
+        f"- #{task.issue_number} and #{overlap.issue_number} both changed "
+        f"{', '.join(overlap.paths)}: merge them one at a time and run the tests after each"
+        for task in state.tasks
+        for overlap in task.overlaps
+        if task.issue_number < overlap.issue_number
+    ]
+
+
+def render_merge_care_section(state: RunState) -> list[str]:
+    lines = render_overlap_lines(state)
+    if not lines:
+        return []
+    return ["## Merge with care", "", *lines, ""]
+
+
 def render_waves_section(state: RunState) -> list[str]:
     waves = waves_of_run(state)
     if not waves:
@@ -285,6 +302,7 @@ def render_digest(state: RunState, repo_slug: str) -> str:
             "",
             render_left_section(left),
             "",
+            *render_merge_care_section(state),
             *render_waves_section(state),
         ]
     )

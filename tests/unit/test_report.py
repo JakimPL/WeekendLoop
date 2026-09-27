@@ -10,6 +10,7 @@ from tests.unit.conftest import (
 from weekend_loop.models import (
     Blocker,
     Effort,
+    Overlap,
     RepoMode,
     Risk,
     RunState,
@@ -126,3 +127,21 @@ def test_the_digest_lists_the_waves_and_why_a_task_ran_alone() -> None:
 
 def test_a_run_that_worked_one_task_at_a_time_has_no_waves_to_list() -> None:
     assert "## Waves" not in render_digest(worked_state([(12, None, None)]), SLUG)
+
+
+def test_the_digest_asks_for_care_where_two_branches_changed_the_same_file() -> None:
+    state = worked_state([(12, 1, None), (13, 1, None)])
+    first, second = state.tasks
+    paired = state.model_copy(
+        update={
+            "tasks": [
+                first.model_copy(update={"overlaps": [Overlap(issue_number=13, paths=["a.py"])]}),
+                second.model_copy(update={"overlaps": [Overlap(issue_number=12, paths=["a.py"])]}),
+            ]
+        }
+    )
+    digest = render_digest(paired, SLUG)
+    section = digest.split("## Merge with care")[1].split("## Waves")[0]
+    assert "- #12 and #13 both changed a.py: merge them one at a time" in section
+    assert section.count("#12 and #13") == 1
+    assert "## Merge with care" not in render_digest(state, SLUG)

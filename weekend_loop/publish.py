@@ -31,6 +31,11 @@ from weekend_loop.workbench import git_environment, write_askpass_script
 DIGEST_NOTE_TEMPLATE: Final[str] = "digest posted at {url}"
 PULL_REQUEST_TITLE_FALLBACK: Final[str] = "weekend: {title}"
 UNFINISHED_TITLE_TEMPLATE: Final[str] = "[unfinished] {title}"
+MERGE_CARE_SUFFIX: Final[str] = " [merge care]"
+MERGE_CARE_TEMPLATE: Final[str] = (
+    "This branch and #{issue_number} changed the same files: {paths}. "
+    "Merge them one at a time and run the tests after each."
+)
 UNFINISHED_BANNER: Final[str] = (
     "> **Unfinished — do not merge.** The worker stopped before it finished this issue. "
     "The changes passed the gate and are offered for inspection only."
@@ -64,6 +69,14 @@ def pull_request_body(task: Task, run_id: str, footer: str) -> str:
     if delivery is not None and delivery.questions:
         lines.extend(["", "## Open questions", ""])
         lines.extend(f"- {question}" for question in delivery.questions)
+    if task.overlaps:
+        lines.extend(["", "## Merge with care", ""])
+        lines.extend(
+            MERGE_CARE_TEMPLATE.format(
+                issue_number=overlap.issue_number, paths=", ".join(overlap.paths)
+            )
+            for overlap in task.overlaps
+        )
     return signed("\n".join(lines), footer, run_id)
 
 
@@ -85,8 +98,8 @@ def pull_request_title(task: Task) -> str:
     subject = delivery.commit_subject.strip() if delivery is not None else ""
     title = subject if subject else PULL_REQUEST_TITLE_FALLBACK.format(title=task.title)
     if task.status is TaskStatus.UNFINISHED:
-        return UNFINISHED_TITLE_TEMPLATE.format(title=title)
-    return title
+        title = UNFINISHED_TITLE_TEMPLATE.format(title=title)
+    return f"{title}{MERGE_CARE_SUFFIX}" if task.overlaps else title
 
 
 def delivery_label(task: Task, policy: Policy) -> str:
