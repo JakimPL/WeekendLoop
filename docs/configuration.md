@@ -96,6 +96,23 @@ repos:
 By default, the worker reads the code and follows it: the style of the files it edits, the existing
 test framework and the recent commit subjects.
 
+## The worker's limits
+
+`worker.allowed_effort`, `worker.allowed_risk` and `worker.max_diff_lines` say what the worker may
+take on: by default the efforts XS and S, the risks docs, tests, refactor and behaviour, and 400
+changed lines. The assessor reads the same limits with every issue. An issue within them that
+leaves nothing open gets `execute` and is worked under its consent label. One beyond them, or with
+a judgement call left open, gets `propose`; a proposal appears in the web application as awaiting
+approval and is worked once you approve it. One that would exceed the changed-lines limit is
+skipped as too large.
+
+```yaml
+worker:
+  allowed_effort: [XS, S, M, L]
+  allowed_risk: [docs, tests, refactor, behaviour, interface]
+  max_diff_lines: 1500
+```
+
 ## Forbidden paths
 
 `repos.<key>.forbidden_paths` names the files the worker leaves alone. They are held twice: the

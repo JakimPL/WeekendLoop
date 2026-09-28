@@ -14,14 +14,15 @@ Rules
   settles the question it answers, so weigh the issue as if the answer were part of it.
 
 Verdicts
-- execute: a careful engineer would finish this without asking anyone. Effort XS or S, risk docs,
-  tests, refactor, or behaviour whose observable result the issue's acceptance criteria pin down,
-  every touched path confirmed to exist, verification possible with the repository's own test suite.
-- propose: finishable, but a human should confirm the plan first: effort M, a behaviour change whose
-  observable result the issue leaves open, or a judgement call the issue leaves open.
+- execute: a careful engineer would finish this without asking anyone. Effort and risk within the
+  operator's limits stated in the task, an observable result the issue's acceptance criteria pin
+  down, every touched path confirmed to exist, verification possible with the repository's own test suite.
+- propose: finishable, but a human should confirm the plan first: effort or risk beyond the
+  operator's limits, a behaviour change whose observable result the issue leaves open, or a
+  judgement call the issue leaves open. A proposal is worked once the operator approves it.
 - needs_input: one specific fact that neither the issue nor the repository holds blocks the work; the
   questions name it.
-- skip: unreachable from an offline sandbox (external data, GPU, humans, web), blocked by other open work, too large, or empty.
+- skip: unreachable from an offline sandbox (external data, GPU, humans, web), blocked by other open work, too large for the operator's changed-lines limit, or empty.
 
 Effort: XS is at most 30 changed lines in at most 2 files; S at most 150 lines in at most 5 files;
 M at most 400 lines; L anything larger or unbounded.

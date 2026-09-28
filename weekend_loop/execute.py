@@ -89,6 +89,8 @@ MAX_TASK_RESUMES: Final[int] = 2
 CLOSED_ISSUE_REASON: Final[str] = "the issue is no longer open"
 REVIEWER_SKIP_REASON: Final[str] = "the reviewer skipped it"
 CONSENT_REASON_TEMPLATE: Final[str] = "consent is {consent}"
+PROPOSAL_REASON: Final[str] = "the plan waits for the operator's approval"
+CONFIRMED_VERDICTS: Final[tuple[Verdict, ...]] = (Verdict.EXECUTE, Verdict.PROPOSE)
 OUTSIDE_LIMITS_REASON: Final[str] = (
     "the assessment is outside the worker's effort, risk or blocker limits"
 )
@@ -114,15 +116,24 @@ def consent_for(issue: Issue, labels: LabelPolicy) -> Consent:
     return Consent.NEEDS_APPROVAL
 
 
-def within_worker_limits(task: Task, policy: Policy) -> bool:
+def within_worker_limits(task: Task, policy: Policy, confirmed: bool) -> bool:
     assessment = task.assessment
-    if assessment is None or assessment.verdict is not Verdict.EXECUTE:
+    if assessment is None or assessment.blockers:
         return False
+    if confirmed and assessment.verdict in CONFIRMED_VERDICTS:
+        return True
     return (
-        assessment.effort in policy.worker.allowed_effort
+        assessment.verdict is Verdict.EXECUTE
+        and assessment.effort in policy.worker.allowed_effort
         and assessment.risk in policy.worker.allowed_risk
-        and not assessment.blockers
     )
+
+
+def refusal_reason(task: Task, confirmed: bool) -> str:
+    assessment = task.assessment
+    if assessment is not None and assessment.verdict is Verdict.PROPOSE and not confirmed:
+        return PROPOSAL_REASON
+    return OUTSIDE_LIMITS_REASON
 
 
 def selectable(task: Task, issue: Issue | None, policy: Policy, inbox: Inbox) -> tuple[bool, str]:
@@ -135,8 +146,9 @@ def selectable(task: Task, issue: Issue | None, policy: Policy, inbox: Inbox) ->
     consent = consent_for(issue, policy.labels)
     if consent not in CONSENT_TO_WORK_ON and task.issue_number not in inbox.approvals:
         return False, CONSENT_REASON_TEMPLATE.format(consent=consent.value)
-    if not within_worker_limits(task, policy):
-        return False, OUTSIDE_LIMITS_REASON
+    confirmed = task.issue_number in inbox.approvals
+    if not within_worker_limits(task, policy, confirmed):
+        return False, refusal_reason(task, confirmed)
     return True, ""
 
 

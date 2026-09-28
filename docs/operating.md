@@ -100,7 +100,8 @@ worktree of its own. [Working in parallel](#working-in-parallel) below describes
 
 **Consent** comes from labels a person wrote. Issues with `weekend:auto` or `weekend:approved` get
 worked. All others are left alone, and the reason goes in the event log. In the web application you
-can approve a task for one run without changing labels.
+can approve a task for one run without changing labels, and that is also how a task the assessor
+proposed gets worked: a proposal waits for your approval and runs once you give it.
 
 **`publish`** is the only command that changes anything on GitHub. It refuses a `dry_run`
 repository. For each branch that passed the gate, it:

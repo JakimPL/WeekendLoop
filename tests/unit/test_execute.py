@@ -21,7 +21,13 @@ from tests.unit.conftest import (
 from tests.unit.test_prefilter import build_issue
 from weekend_loop.briefing import append_note, record_answer
 from weekend_loop.cli import EXIT_BLOCKED, main
-from weekend_loop.execute import consent_for, selectable, within_worker_limits
+from weekend_loop.execute import (
+    PROPOSAL_REASON,
+    consent_for,
+    refusal_reason,
+    selectable,
+    within_worker_limits,
+)
 from weekend_loop.mailbox import (
     answer_question,
     approve_issue,
@@ -159,7 +165,7 @@ def test_only_small_low_risk_unblocked_work_reaches_the_worker(workspace_policy:
         ELIGIBLE,
         build_assessment(Verdict.EXECUTE, Effort.XS, Risk.TESTS, [], []),
     )
-    assert within_worker_limits(allowed, policy)
+    assert within_worker_limits(allowed, policy, False)
     for assessment in (
         build_assessment(Verdict.PROPOSE, Effort.XS, Risk.TESTS, [], []),
         build_assessment(Verdict.EXECUTE, Effort.M, Risk.TESTS, [], []),
@@ -167,7 +173,32 @@ def test_only_small_low_risk_unblocked_work_reaches_the_worker(workspace_policy:
         build_assessment(Verdict.EXECUTE, Effort.XS, Risk.TESTS, [Blocker.NEEDS_HUMAN], []),
     ):
         task = build_task(1, ISSUE_TITLE, TaskStatus.ASSESSED, ELIGIBLE, assessment)
-        assert not within_worker_limits(task, policy)
+        assert not within_worker_limits(task, policy, False)
+
+
+def test_a_proposal_reaches_the_worker_once_the_operator_approves_it(
+    workspace_policy: Policy,
+) -> None:
+    policy = workspace_policy
+    proposed = build_task(
+        1,
+        ISSUE_TITLE,
+        TaskStatus.ASSESSED,
+        ELIGIBLE,
+        build_assessment(Verdict.PROPOSE, Effort.M, Risk.INTERFACE, [], []),
+    )
+    blocked = build_task(
+        2,
+        ISSUE_TITLE,
+        TaskStatus.ASSESSED,
+        ELIGIBLE,
+        build_assessment(Verdict.PROPOSE, Effort.M, Risk.INTERFACE, [Blocker.NEEDS_HUMAN], []),
+    )
+
+    assert not within_worker_limits(proposed, policy, False)
+    assert refusal_reason(proposed, False) == PROPOSAL_REASON
+    assert within_worker_limits(proposed, policy, True)
+    assert not within_worker_limits(blocked, policy, True)
 
 
 def test_an_issue_that_closed_since_triage_is_not_selectable(workspace_policy: Policy) -> None:

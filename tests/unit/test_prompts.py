@@ -12,6 +12,7 @@ REQUIRED_PLACEHOLDERS = {
         "{issue_number}",
         "{repo_slug}",
         "{spec_signals}",
+        "{worker_limits}",
         "{briefing}",
         "{issue_title}",
         "{issue_body}",

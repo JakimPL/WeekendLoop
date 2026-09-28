@@ -3,6 +3,10 @@ Assess issue #{issue_number} of {repo_slug} for autonomous execution by the week
 Deterministic signals computed by the orchestrator:
 {spec_signals}
 
+## The operator's limits
+
+{worker_limits}
+
 ## The operator's standing guidance
 
 {briefing}

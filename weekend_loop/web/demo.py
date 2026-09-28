@@ -14,6 +14,7 @@ from weekend_loop.execute import (
     DEADLINE_REASON,
     ENVELOPE_REASON,
     OUTSIDE_LIMITS_REASON,
+    PROPOSAL_REASON,
     REVIEWER_SKIP_REASON,
 )
 from weekend_loop.models import (
@@ -163,6 +164,7 @@ INELIGIBILITY_PHRASES: Final[dict[IneligibilityReason, str]] = {
 }
 SKIP_PHRASES: Final[dict[str, str]] = {
     OUTSIDE_LIMITS_REASON: "outside the agent's limits",
+    PROPOSAL_REASON: "waits for approval",
     CLOSED_ISSUE_REASON: "the issue was closed",
     REVIEWER_SKIP_REASON: "skipped by the reviewer",
     DEADLINE_REASON: "the weekend is over",

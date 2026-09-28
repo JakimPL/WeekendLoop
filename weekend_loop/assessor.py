@@ -23,6 +23,7 @@ from weekend_loop.models import (
     Risk,
     SpecSignals,
     Verdict,
+    WorkerPolicy,
 )
 from weekend_loop.resources import PromptName, SchemaName, prompt_text, schema_text
 from weekend_loop.supervision import RunSupervisor
@@ -61,13 +62,31 @@ def render_spec_signals(signals: SpecSignals) -> str:
     return "\n".join(lines)
 
 
+def render_worker_limits(worker: WorkerPolicy) -> str:
+    efforts = ", ".join(effort.value for effort in worker.allowed_effort)
+    risks = ", ".join(risk.value for risk in worker.allowed_risk)
+    return "\n".join(
+        [
+            f"- efforts the worker may take: {efforts}",
+            f"- risks the worker may take: {risks}",
+            f"- changed lines a branch may carry: at most {worker.max_diff_lines}",
+        ]
+    )
+
+
 def render_assessor_prompt(
-    template: str, issue: Issue, signals: SpecSignals, repo_slug: str, briefing_block: str
+    template: str,
+    issue: Issue,
+    signals: SpecSignals,
+    repo_slug: str,
+    briefing_block: str,
+    limits_block: str,
 ) -> str:
     return template.format(
         issue_number=issue.number,
         repo_slug=repo_slug,
         spec_signals=render_spec_signals(signals),
+        worker_limits=limits_block,
         briefing=briefing_block,
         issue_title=issue.title,
         issue_body=issue.body.strip(),
@@ -143,6 +162,7 @@ def assess_issue(
         signals,
         context.repo.slug,
         render_briefing_block(context.briefing, issue.number),
+        render_worker_limits(policy.worker),
     )
     transcript = supervisor.transcript_for(ASSESSMENT_TRANSCRIPT_ROLE, issue.number)
     supervisor.enter(ActivityKind.ASSESSING, issue.number, transcript, None)
