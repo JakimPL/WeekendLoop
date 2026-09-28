@@ -112,6 +112,8 @@ run for showing to other people.
 - [docs/configuration.md](docs/configuration.md): keys, labels, identity and prompts
 - [docs/operating.md](docs/operating.md): commands, limits, systemd, cron and watching a run
 - [docs/answering.md](docs/answering.md): how the agent asks and how your answers reach it
+- [the writing guide](weekend_loop/resources/prompts/writing_guide.md): how to write an issue, a
+  plan and a pull request description a busy reader understands; the agent writes by it too
 - [docs/architecture.md](docs/architecture.md): how it is built and where each part lives
 - [docs/demo.md](docs/demo.md): the example project and its seven issues
 - [docs/developing.md](docs/developing.md): running the tests and the project's conventions

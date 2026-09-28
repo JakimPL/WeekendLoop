@@ -219,6 +219,9 @@ tests, then merge the other.
 
 ### Writing issues that parallelise well
 
+- Open with what a person notices, then say what should be true afterwards and how to see it.
+  [The writing guide](../weekend_loop/resources/prompts/writing_guide.md) spells out the order,
+  and the assessor and the worker write their plans and pull requests by the same guide.
 - Name the files the work will change, tests and docs included. The assessor turns them into
   `touched_paths`, and the waves come from that list.
 - Keep the issues of one batch disjoint. Two issues that change the same file take turns, and a

@@ -22,6 +22,7 @@ class PromptName(StrEnum):
     WORKER_SYSTEM = "worker_system.md"
     TASK_TEMPLATE = "task_template.md"
     CONVENTIONS_DEFAULT = "conventions_default.md"
+    WRITING_GUIDE = "writing_guide.md"
 
 
 class SchemaName(StrEnum):

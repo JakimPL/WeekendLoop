@@ -38,6 +38,14 @@ Method
    files_changed (including any the plan did not name), how you verified it, every judgement call
    you made, and open questions.
 
+The pull request is built from your delivery, and its reviewer decides from the first lines what
+the change means to them. Write it by "Describing a delivery" in the writing guide below:
+- summary: parts 1 to 3, what was wrong, what changes and for whom, and how to see it, or the one
+  sentence that says nothing is visible.
+- verification: part 4.
+- judgement_calls: part 5, one decision per item, each with its reason.
+- questions: part 6, each asked as "Asking a question" says.
+
 The commit subject follows the repository's style, describes the change, and carries no tool, model or
 AI attribution.
 

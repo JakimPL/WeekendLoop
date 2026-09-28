@@ -186,6 +186,19 @@ def test_the_conventions_of_the_repository_ride_along_in_the_system_prompt(
     assert "Git belongs to the orchestrator" in prompts.system
 
 
+def test_the_writing_guide_sits_between_the_worker_rules_and_the_conventions(
+    tmp_path: Path, workspace_policy: Policy
+) -> None:
+    conventions = tmp_path / "conventions.md"
+    conventions.write_text("Gate: pytest tests\nThe repository speaks for itself here.\n")
+    repo = pilot_of(workspace_policy).model_copy(update={"conventions_prompt": conventions})
+    system = load_worker_prompts(repo, workspace_policy.workspace.prompts_dir).system
+    rules = system.index("Git belongs to the orchestrator")
+    guide = system.index("# Writing about work")
+    repository = system.index("The repository speaks for itself here.")
+    assert rules < guide < repository
+
+
 def test_a_valid_delivery_is_read_back_from_the_structured_output() -> None:
     payload = delivery_payload("done", "fix(records): treat an empty speed as unknown", [])
     delivery = delivery_from_result(build_result(payload))

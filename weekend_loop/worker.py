@@ -66,7 +66,11 @@ def conventions_text(repo: RepoTarget, overrides: Path) -> str:
 def load_worker_prompts(repo: RepoTarget, overrides: Path) -> WorkerPrompts:
     return WorkerPrompts(
         system="\n\n".join(
-            [prompt_text(PromptName.WORKER_SYSTEM, overrides), conventions_text(repo, overrides)]
+            [
+                prompt_text(PromptName.WORKER_SYSTEM, overrides),
+                prompt_text(PromptName.WRITING_GUIDE, overrides),
+                conventions_text(repo, overrides),
+            ]
         ),
         task_template=prompt_text(PromptName.TASK_TEMPLATE, overrides),
         json_schema=schema_text(SchemaName.DELIVERY),

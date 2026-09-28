@@ -34,6 +34,12 @@ REQUIRED_PLACEHOLDERS = {
 }
 
 
+GUIDE_SECTIONS_NAMED = {
+    "worker_system.md": {"Describing a delivery", "Asking a question"},
+    "assessor_system.md": {"Describing a task", "Asking a question"},
+}
+
+
 @pytest.mark.parametrize(("name", "placeholders"), sorted(REQUIRED_PLACEHOLDERS.items()))
 def test_templates_carry_their_placeholders(name: str, placeholders: set[str]) -> None:
     text = prompt_text(PromptName(name), None)
@@ -61,3 +67,17 @@ def test_a_prompt_in_the_workspace_wins_over_the_one_the_package_carries(tmp_pat
     override.write_text("Follow the house rules of this repository and nothing else.\n")
     assert prompt_text(PromptName.WORKER_SYSTEM, tmp_path) == override.read_text()
     assert prompt_text(PromptName.WORKER_SYSTEM, None) != override.read_text()
+
+
+@pytest.mark.parametrize(("name", "sections"), sorted(GUIDE_SECTIONS_NAMED.items()))
+def test_every_guide_section_a_prompt_names_is_a_heading_of_the_guide(
+    name: str, sections: set[str]
+) -> None:
+    prompt = prompt_text(PromptName(name), None)
+    headings = {
+        line.removeprefix("## ")
+        for line in prompt_text(PromptName.WRITING_GUIDE, None).splitlines()
+        if line.startswith("## ")
+    }
+    assert {section for section in sections if f'"{section}"' in prompt} == sections
+    assert sections <= headings

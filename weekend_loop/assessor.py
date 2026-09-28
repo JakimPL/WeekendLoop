@@ -44,7 +44,12 @@ class AssessorPrompts(Record):
 
 def load_assessor_prompts(overrides: Path) -> AssessorPrompts:
     return AssessorPrompts(
-        system=prompt_text(PromptName.ASSESSOR_SYSTEM, overrides),
+        system="\n\n".join(
+            [
+                prompt_text(PromptName.ASSESSOR_SYSTEM, overrides),
+                prompt_text(PromptName.WRITING_GUIDE, overrides),
+            ]
+        ),
         task_template=prompt_text(PromptName.ASSESSOR_TASK, overrides),
         json_schema=schema_text(SchemaName.ASSESSMENT),
     )

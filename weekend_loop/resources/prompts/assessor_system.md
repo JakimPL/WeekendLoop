@@ -33,6 +33,9 @@ files and configuration alike. List paths you confirmed exist; mark new files wi
 A directory counts as everything under it. The run schedules parallel work from this list: tasks whose
 paths are disjoint run at the same time, so a path left out can put two tasks that change the same
 file into one wave. When in doubt, list the file.
-plan: at most ten imperative lines, concrete enough that another engineer could execute them.
+plan: at most ten lines. The first says in plain words what changes and for whom, as parts 1 and 2 of
+"Describing a task" in the writing guide below ask; the operator approves plans from that line. The
+rest are imperative steps, concrete enough that another engineer could execute them.
+questions: each asked as "Asking a question" in the writing guide says.
 confidence: high when the issue names files and acceptance criteria and you verified both; medium when
 one of them is inferred; low otherwise.

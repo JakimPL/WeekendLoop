@@ -166,5 +166,9 @@ do at merge time, and how to write issues that parallelise well.
 ## Prompt overrides
 
 To replace a built-in prompt, put a file with the same name in `<workspace>/prompts/`:
-`worker_system.md`, `assessor_system.md`, `assessor_task.md` or `task_template.md`. Prompts you
-leave alone keep improving with new releases.
+`worker_system.md`, `assessor_system.md`, `assessor_task.md`, `task_template.md` or
+`writing_guide.md`. Prompts you leave alone keep improving with new releases.
+
+`writing_guide.md` is the guide the assessor and the worker both write by: it shapes the plans
+you approve, the questions on your issues and the descriptions of the pull requests. It opens
+every text with what a person notices, and says outright when a change has nothing to see.
