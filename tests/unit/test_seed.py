@@ -20,14 +20,17 @@ EXAMPLES = REPOSITORY_ROOT / "examples"
 ISSUE_URL_TEMPLATE = "https://github.com/owner/repository/issues/{number}\n"
 TEMPLATE_HEADINGS = ("## Business requirement", "## Goal", "## Scope")
 MINIMUM_BODY_LENGTH = 200
-EXPECTED_ISSUE_COUNT = 7
+EXPECTED_ISSUE_COUNT = 10
+CHILD_ISSUE = 8
+PARENT_ISSUE = 1
+PARENT_ID = 4000001
 
 
 class ScriptedCommands:
-    def __init__(self, responses: dict[str, str]) -> None:
+    def __init__(self, responses: dict[str, str], first_number: int) -> None:
         self.responses = responses
         self.log: list[str] = []
-        self.created_issues = 0
+        self.created_issues = first_number - 1
 
     def run(self, arguments: list[str], stdin: str | None = None) -> str:
         command = " ".join(["gh", *arguments])
@@ -52,7 +55,7 @@ def issues() -> list[SeedIssue]:
     return load_seed_issues(issues_directory(EXAMPLES))
 
 
-def test_seven_issues_with_unique_keys(issues: list[SeedIssue]) -> None:
+def test_every_issue_has_a_key_of_its_own(issues: list[SeedIssue]) -> None:
     assert len(issues) == EXPECTED_ISSUE_COUNT
     assert len({issue.key for issue in issues}) == EXPECTED_ISSUE_COUNT
 
@@ -72,12 +75,24 @@ def test_some_issues_state_acceptance_criteria_and_others_leave_them_out(
 
 def test_expected_outcomes_cover_every_pilot_scenario(issues: list[SeedIssue]) -> None:
     verdicts = [issue.expected_verdict for issue in issues if issue.expected_verdict is not None]
-    assert verdicts.count(Verdict.EXECUTE) == 2
+    assert verdicts.count(Verdict.EXECUTE) == 5
     assert verdicts.count(Verdict.NEEDS_INPUT) == 1
     assert verdicts.count(Verdict.SKIP) == 2
     ineligibilities = {issue.expected_ineligibility for issue in issues}
     assert IneligibilityReason.NEVER_LABEL in ineligibilities
     assert IneligibilityReason.OPEN_LINKED_PULL_REQUEST in ineligibilities
+    keys = {issue.key for issue in issues}
+    blocked = [issue for issue in issues if issue.blocked_by]
+    assert blocked and all(set(issue.blocked_by) <= keys for issue in blocked)
+
+
+def dependency_responses(slug: str, linked: str) -> dict[str, str]:
+    return {
+        f"gh api repos/{slug}/issues/{CHILD_ISSUE}/dependencies": linked,
+        f"gh api repos/{slug}/issues/{PARENT_ISSUE}": json.dumps(
+            {"id": PARENT_ID, "number": PARENT_ISSUE}
+        ),
+    }
 
 
 def test_every_executable_issue_has_a_hidden_acceptance_test(issues: list[SeedIssue]) -> None:
@@ -93,13 +108,13 @@ def test_an_empty_repository_gets_labels_issues_and_a_linked_pull_request(
     policy = workspace_policy
     repo = policy.repos[GITHUB_REPO_KEY]
     commands = ScriptedCommands(
-        {
-            "gh issue list": "[]",
-            "gh pr list": "[]",
-        }
+        {"gh issue list": "[]", "gh pr list": "[]", **dependency_responses(repo.slug, "[]")}, 1
     )
     outcome = seed_repository(commands, repo, policy.labels, issues)
     log = "\n".join(commands.log)
+    link = f"gh api -X POST repos/{repo.slug}/issues/{CHILD_ISSUE}/dependencies/blocked_by"
+    assert link in log and f"issue_id={PARENT_ID}" in log
+    assert outcome.linked_dependencies == [f"#{CHILD_ISSUE} blocked by #{PARENT_ISSUE}"]
     for label in [*board_labels(policy.labels), *example_labels()]:
         assert label.name in log
     for issue in issues:
@@ -126,18 +141,22 @@ def test_a_seeded_repository_is_left_as_it_is(
 ) -> None:
     policy = workspace_policy
     repo = policy.repos[GITHUB_REPO_KEY]
+    linked = json.dumps([{"id": PARENT_ID, "number": PARENT_ISSUE}])
     commands = ScriptedCommands(
         {
             "gh issue list": listed_issues(issues),
-            "gh pr list": '[{"number": 8}]',
-        }
+            "gh pr list": '[{"number": 11}]',
+            **dependency_responses(repo.slug, linked),
+        },
+        len(issues) + 1,
     )
     outcome = seed_repository(commands, repo, policy.labels, issues)
     log = "\n".join(commands.log)
     assert outcome.created_issues == []
     assert outcome.opened_pull_requests == []
     assert outcome.issue_numbers == {issue.key: number for number, issue in enumerate(issues, 1)}
-    for write in ("gh issue create", "gh pr create", "gh api"):
+    assert outcome.linked_dependencies == []
+    for write in ("gh issue create", "gh pr create", "gh api -X POST"):
         assert write not in log
 
 
@@ -150,7 +169,9 @@ def test_a_half_seeded_repository_is_completed(
         {
             "gh issue list": listed_issues(issues[:3]),
             "gh pr list": "[]",
-        }
+            **dependency_responses(repo.slug, "[]"),
+        },
+        4,
     )
     outcome = seed_repository(commands, repo, policy.labels, issues)
     log = "\n".join(commands.log)

@@ -11,6 +11,7 @@ from weekend_loop.demo.publish import SetupContext, publish_playground
 from weekend_loop.demo.seed import (
     acceptance_directory,
     acceptance_map,
+    dependency_links,
     issues_directory,
     load_seed_issues,
     seed_repository,
@@ -86,6 +87,7 @@ def remove(paths: list[Path]) -> list[Path]:
 class DemoOutcome(Record):
     issue_numbers: dict[str, int]
     linked_issue_numbers: list[int]
+    dependencies: list[str]
     acceptance_tests: dict[str, str]
 
 
@@ -116,5 +118,8 @@ def build_demo(examples: Path, policy: Policy, repo_key: str) -> DemoOutcome:
         if issue.linked_pull_request_branch is not None
     ]
     return DemoOutcome(
-        issue_numbers=outcome.issue_numbers, linked_issue_numbers=linked, acceptance_tests=tests
+        issue_numbers=outcome.issue_numbers,
+        linked_issue_numbers=linked,
+        dependencies=dependency_links(issues, outcome.issue_numbers),
+        acceptance_tests=tests,
     )

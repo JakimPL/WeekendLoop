@@ -146,13 +146,16 @@ def test_the_seed_summary_says_what_changed() -> None:
         issue_numbers={"new-chat": 1, "readme": 2},
         created_issues=["new-chat", "readme"],
         opened_pull_requests=["feat/dark-mode"],
+        linked_dependencies=["#8 blocked by #1"],
     )
     tests = {"2": "pilot/acceptance/test_readme.py", "1": "pilot/acceptance/test_new_chat.py"}
     assert seed_summary(fresh, tests) == (
         "created 2 of 2 issues, opened a draft pull request on feat/dark-mode, "
-        "hidden tests for #1, #2"
+        "linked #8 blocked by #1, hidden tests for #1, #2"
     )
-    again = fresh.model_copy(update={"created_issues": [], "opened_pull_requests": []})
+    again = fresh.model_copy(
+        update={"created_issues": [], "opened_pull_requests": [], "linked_dependencies": []}
+    )
     assert seed_summary(again, tests).startswith(
         "all 2 issues were there, the draft pull requests on the linked branches were there"
     )

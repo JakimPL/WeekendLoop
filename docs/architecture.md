@@ -91,7 +91,7 @@ weekend_loop/labels.py      the six `weekend:*` labels and how they reach a boar
 weekend_loop/resources/     the prompts, schemas, fence templates and starter config the package ships
 weekend_loop/demo/          builds, resets and publishes the example board; it never runs during a run
 examples/demo-repo/         the example repository (pocketchat), a chat page mockup with unfinished work
-examples/issues/            seven seeded issues with the outcome the example expects from each
+examples/issues/            ten seeded issues with the outcome the example expects from each
 examples/acceptance/        hidden acceptance tests the orchestrator runs against delivered branches
 ```
 

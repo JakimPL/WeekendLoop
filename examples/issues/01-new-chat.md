@@ -6,6 +6,7 @@ expected_verdict: execute
 expected_ineligibility: null
 acceptance_test: test_new_chat.py
 linked_pull_request_branch: null
+blocked_by: []
 ---
 When people switch topic they hit "New chat" expecting a clean page, but nothing happens and the old
 conversation just stays there. Somebody started this and never finished it: the button in the page

@@ -10,7 +10,8 @@ WORKSPACE_OF_YOUR_OWN: Final[str] = (
 )
 BOARD: Final[str] = "board"
 BOARD_SEEDED: Final[str] = (
-    "{issues} issues, an open pull request linked to {linked}, hidden tests for {tested}"
+    "{issues} issues, {dependencies}, an open pull request linked to {linked}, "
+    "hidden tests for {tested}"
 )
 BOARD_KEPT: Final[str] = "kept, {count} open issues"
 RESET: Final[str] = "reset"

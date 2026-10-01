@@ -86,6 +86,7 @@ def seed_issue(number: int) -> SeedIssue:
         expected_ineligibility=None,
         acceptance_test=None,
         linked_pull_request_branch=None,
+        blocked_by=[],
     )
 
 

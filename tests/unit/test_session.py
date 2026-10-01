@@ -73,6 +73,7 @@ from weekend_loop.schedule import render_crontab
 from weekend_loop.session import publishing_allowed, work_may_follow
 
 ISSUE_TITLE = "Empty speed field crashes the parser"
+PER_TASK_USD = 6.0
 ISSUE_BODY = (
     "## Business requirement\nThe harbour log misreports vessel speed.\n\n"
     "## Goal\nParse an empty speed field as unknown instead of crashing the import.\n\n"
@@ -137,10 +138,11 @@ def prepare_two_issue_weekend(
     return policy_path
 
 
-def set_envelope(policy_path: Path, envelope_usd: float) -> None:
+def set_budget(policy_path: Path, envelope_usd: float, per_task_usd: float) -> None:
     config = Workspace(root=policy_path).config_path
     raw = yaml.safe_load(config.read_text())
     raw["budget"]["envelope_usd"] = envelope_usd
+    raw["budget"]["per_task_usd"] = per_task_usd
     config.write_text(yaml.safe_dump(raw))
 
 
@@ -166,7 +168,7 @@ def test_running_out_of_the_envelope_still_publishes_the_work_done(
     tmp_path: Path, fake_binaries: Path
 ) -> None:
     policy_path = prepare_two_issue_weekend(tmp_path, fake_binaries, {"default": EXECUTE_VERDICT})
-    set_envelope(policy_path, 7.0)
+    set_budget(policy_path, 7.0, PER_TASK_USD)
     assert weekend(policy_path) == 0
     state = latest_state(policy_path)
     assert [task.status for task in state.tasks] == [TaskStatus.REVIEW, TaskStatus.ASSESSED]

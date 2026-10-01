@@ -73,7 +73,10 @@ def board_step(policy: Policy, repo_key: str, examples: Path) -> StepOutcome:
     tested = ", ".join(f"#{number}" for number in sorted(outcome.acceptance_tests, key=int))
     linked = ", ".join(f"#{number}" for number in outcome.linked_issue_numbers)
     detail = messages.BOARD_SEEDED.format(
-        issues=len(outcome.issue_numbers), linked=linked, tested=tested
+        issues=len(outcome.issue_numbers),
+        dependencies=", ".join(outcome.dependencies),
+        linked=linked,
+        tested=tested,
     )
     return done(messages.BOARD, detail)
 

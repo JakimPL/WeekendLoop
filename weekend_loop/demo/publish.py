@@ -181,8 +181,13 @@ def seed_summary(outcome: SeedOutcome, tests: dict[str, str]) -> str:
         if opened
         else "the draft pull requests on the linked branches were there"
     )
+    dependencies = (
+        f"linked {', '.join(outcome.linked_dependencies)}"
+        if outcome.linked_dependencies
+        else "the blocked-by links were there"
+    )
     tested = ", ".join(f"#{number}" for number in sorted(tests, key=int))
-    return f"{issues}, {pull_requests}, hidden tests for {tested}"
+    return f"{issues}, {pull_requests}, {dependencies}, hidden tests for {tested}"
 
 
 def seed_issues(context: SetupContext) -> str:

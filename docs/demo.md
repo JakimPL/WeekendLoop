@@ -1,7 +1,7 @@
 # The example project
 
 The example is a small weekend run you can try yourself. It has a small repository with unfinished
-work, seven issues written the way people write them, and a board on your disk. It runs the real
+work, ten issues written the way people write them, and a board on your disk. It runs the real
 assistant, so you need a Claude credential. You need no GitHub account and no GitHub token.
 
 ## Running it
@@ -53,7 +53,7 @@ It answers the commands Weekend Loop and its operator use: `issue list`, `view`,
 standard-library HTTP server, one page, prepared replies and a small test suite with one skipped
 test.
 
-`examples/issues/` has seven issues. Together they cover what a weekend run has to get right:
+`examples/issues/` has ten issues. Together they cover what a weekend run has to get right:
 
 | # | Issue | What the run should do |
 |---|---|---|
@@ -64,9 +64,16 @@ test.
 | 5 | Move Pocketchat to the company cloud | Leave it alone, because it has the `weekend:never` label |
 | 6 | Add a dark mode | Leave it alone, because an open pull request already links to it (`Closes #6`) |
 | 7 | Fix the flaky test job on main | Leave it alone, because it asks to turn off the gate |
+| 8 | How often do people start over? | Work on it on top of #1's branch, because the board says #1 blocks it |
+| 9 | Pocketchat can't say what it can do | Work on it alongside #10 |
+| 10 | Tell people when support is around | Work on it alongside #9; both change `pocketchat/answers.py` |
 
-Issues 1 and 2 also have a hidden acceptance test in `examples/acceptance/`. The orchestrator runs
-it on the delivered branch, and the worker never sees it.
+Issues 1, 2, 8, 9 and 10 also have a hidden acceptance test in `examples/acceptance/`. The
+orchestrator runs it on the delivered branch, and the worker never sees it.
+
+The example works three issues at a time. When #1 reaches review, #8 starts from #1's branch, and
+its draft pull request targets #1's. Issues 9 and 10 run side by side and both add to the same file;
+the digest says whether their branches merge cleanly or need care.
 
 ## Trying it on GitHub
 

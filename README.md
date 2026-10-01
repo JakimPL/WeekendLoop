@@ -42,8 +42,9 @@ weekend-loop weekend --ignore-window
 `demo up` builds the example in `~/.weekend-loop-demo` and asks for your Claude token: run
 `claude setup-token` in another terminal and paste the line it prints after "Your OAuth token".
 `demo env` points `weekend-loop` and `gh` at the example in that terminal, so `gh issue list` and
-`gh pr diff` show its board. You get a draft pull request or two, one issue with a question, one
-issue skipped as too large, and three issues left alone for reasons the digest explains.
+`gh pr diff` show its board. You get draft pull requests for up to five issues, one of them
+stacked on another, one issue with a question, one issue skipped as too large, and three issues
+left alone for reasons the digest explains.
 
 `weekend-loop demo reset` starts the example over, and `weekend-loop demo remove` deletes it.
 [docs/demo.md](docs/demo.md) describes what each issue tests.
@@ -125,7 +126,7 @@ a run in progress, and `weekend-loop web` shows the same view, plus the question
 - [the writing guide](weekend_loop/resources/prompts/writing_guide.md): how to write an issue, a
   plan and a pull request description a busy reader understands; the agent writes by it too
 - [docs/architecture.md](docs/architecture.md): how it is built and where each part lives
-- [docs/demo.md](docs/demo.md): the example project and its seven issues
+- [docs/demo.md](docs/demo.md): the example project and its ten issues
 - [docs/developing.md](docs/developing.md): running the tests and the project's conventions
 
 ## License

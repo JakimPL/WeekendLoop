@@ -24,9 +24,10 @@ from weekend_loop.policy import policy_at, repo_target
 from weekend_loop.preflight import ISSUE_DEPENDENCIES_CHECK, run_preflight
 
 NOW = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
-SEEDED_ISSUE_COUNT = 7
+SEEDED_ISSUE_COUNT = 10
 DARK_MODE_ISSUE = 6
 FIRST_ISSUE = 1
+COUNT_ISSUE = 8
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 ARCHIVED_BRANCH = "weekend/5-archived"
 SPEED_BRANCH = "weekend/1-empty-speed"
@@ -57,6 +58,13 @@ def test_seeding_writes_every_issue_and_a_pull_request_linked_to_one(tmp_path: P
     labels = {label.name for label in board.read_index().labels}
     assert {label.name for label in board_labels(policy.labels)} <= labels
     assert {"enhancement", "refactor"} <= labels
+
+
+def test_the_board_says_which_issue_builds_on_another(tmp_path: Path) -> None:
+    policy = policy_at(seeded(tmp_path))
+    issues = reader_for(repo_target(policy, "demo"), policy.state_dir).open_issues(100)
+    blocked = {issue.number: issue.blocked_by for issue in issues if issue.blocked_by}
+    assert blocked == {COUNT_ISSUE: [FIRST_ISSUE]}
 
 
 def test_the_reader_reports_the_pull_request_that_overlaps_an_issue(tmp_path: Path) -> None:

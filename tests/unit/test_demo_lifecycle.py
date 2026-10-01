@@ -36,7 +36,7 @@ REPO_KEY: Final[str] = "demo"
 CLAUDE_TOKEN: Final[str] = "sk-ant-oat01-example"
 NOW: Final[datetime] = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 SECRET_MODE: Final[int] = 0o600
-SEEDED_ISSUES: Final[list[int]] = [1, 2, 3, 4, 5, 6, 7]
+SEEDED_ISSUES: Final[list[int]] = list(range(1, 11))
 
 
 @pytest.fixture
@@ -85,7 +85,10 @@ class TestPocketchatLifecycle:
         assert open_numbers(demo_root) == SEEDED_ISSUES
         assert sorted(path.name for path in workspace.acceptance_dir.glob("test_*.py")) == [
             "test_new_chat.py",
+            "test_new_chat_count.py",
             "test_readme.py",
+            "test_support_hours.py",
+            "test_what_can_you_do.py",
         ]
         assert wrapper_path(workspace.state_dir).is_file()
         assert operator.questions == []

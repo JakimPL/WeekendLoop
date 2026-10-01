@@ -25,10 +25,10 @@ repos:
     backend: github
 
 budget:
-  envelope_usd: 15.0
-  per_task_usd: 6.0
+  envelope_usd: 25.0
+  per_task_usd: 4.0
   assessor_usd: 0.5
-  max_tasks: 3
+  max_tasks: 5
   weekly_reset_at: null
 
 usage:
@@ -52,8 +52,14 @@ worker:
   allowed_effort: [XS, S]
   allowed_risk: [docs, tests, refactor, behaviour]
   branch_prefix: weekend/
-  parallel: 1
+  parallel: 3
+  max_stack_depth: 2
   shared_paths: []
+
+resources:
+  task_memory_gb: 2.0
+  gate_memory_gb: 2.0
+  gates_at_once: 2
 
 labels:
   auto: "weekend:auto"

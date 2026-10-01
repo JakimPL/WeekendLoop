@@ -9,7 +9,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from weekend_loop.acceptance import acceptance_map_path
-from weekend_loop.github import GhCommands
+from weekend_loop.github import API_VERSION_HEADER, PINNED_API_VERSION, GhCommands
 from weekend_loop.labels import board_labels, label_arguments
 from weekend_loop.models import (
     BoardLabel,
@@ -47,6 +47,8 @@ LINKED_PULL_REQUEST_BODY: Final[str] = (
     "Work in progress on the dark mode.\n\nCloses #{issue_number}"
 )
 EXAMPLE_LABEL_COLOUR: Final[str] = "C5DEF5"
+DEPENDENCIES_VERSION: Final[str] = f"{API_VERSION_HEADER}: {PINNED_API_VERSION}"
+DEPENDENCY_LINK_TEMPLATE: Final[str] = "#{number} blocked by #{blocker}"
 EXAMPLE_LABELS: Final[tuple[tuple[str, str], ...]] = (
     ("refactor", "Restructures the code and keeps what it does"),
 )
@@ -62,6 +64,7 @@ class SeedIssue(BaseModel):
     expected_ineligibility: IneligibilityReason | None
     acceptance_test: Path | None
     linked_pull_request_branch: str | None
+    blocked_by: list[str]
     body: str
 
 
@@ -72,12 +75,20 @@ class ListedIssue(BaseModel):
     title: str
 
 
+class IssueIdentity(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    number: int
+
+
 class SeedOutcome(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     issue_numbers: dict[str, int]
     created_issues: list[str]
     opened_pull_requests: list[str]
+    linked_dependencies: list[str]
 
 
 def parse_seed_issue(text: str) -> SeedIssue:
@@ -216,6 +227,46 @@ def ensure_linked_pull_requests(
     ]
 
 
+def issue_identity(commands: GhCommands, slug: str, number: int) -> IssueIdentity:
+    return IssueIdentity.model_validate_json(commands.run(["api", f"repos/{slug}/issues/{number}"]))
+
+
+def dependencies_path(slug: str, number: int) -> str:
+    return f"repos/{slug}/issues/{number}/dependencies/blocked_by"
+
+
+def blockers_linked(commands: GhCommands, slug: str, number: int) -> set[int]:
+    output = commands.run(["api", dependencies_path(slug, number), "-H", DEPENDENCIES_VERSION])
+    listed = TypeAdapter(list[IssueIdentity]).validate_json(output or "[]")
+    return {issue.number for issue in listed}
+
+
+def link_blocker(commands: GhCommands, slug: str, number: int, blocker: int) -> None:
+    blocking = issue_identity(commands, slug, blocker)
+    commands.run(
+        [
+            *("api", "-X", "POST", dependencies_path(slug, number)),
+            *("-H", DEPENDENCIES_VERSION, "-F", f"issue_id={blocking.id}"),
+        ]
+    )
+
+
+def ensure_dependencies(
+    commands: GhCommands, slug: str, issues: list[SeedIssue], issue_numbers: dict[str, int]
+) -> list[str]:
+    linked: list[str] = []
+    for issue in issues:
+        if not issue.blocked_by:
+            continue
+        number = issue_numbers[issue.key]
+        present = blockers_linked(commands, slug, number)
+        for blocker in (issue_numbers[key] for key in issue.blocked_by):
+            if blocker not in present:
+                link_blocker(commands, slug, number, blocker)
+                linked.append(DEPENDENCY_LINK_TEMPLATE.format(number=number, blocker=blocker))
+    return linked
+
+
 def seed_repository(
     commands: GhCommands, repo: RepoTarget, labels: LabelPolicy, issues: list[SeedIssue]
 ) -> SeedOutcome:
@@ -226,7 +277,16 @@ def seed_repository(
         issue_numbers=issue_numbers,
         created_issues=created_issues,
         opened_pull_requests=ensure_linked_pull_requests(commands, repo, issues, issue_numbers),
+        linked_dependencies=ensure_dependencies(commands, repo.slug, issues, issue_numbers),
     )
+
+
+def dependency_links(issues: list[SeedIssue], issue_numbers: dict[str, int]) -> list[str]:
+    return [
+        DEPENDENCY_LINK_TEMPLATE.format(number=issue_numbers[issue.key], blocker=issue_numbers[key])
+        for issue in issues
+        for key in issue.blocked_by
+    ]
 
 
 def linked_pull_request_branches(issues: list[SeedIssue]) -> list[str]:

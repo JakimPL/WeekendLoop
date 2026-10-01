@@ -38,7 +38,7 @@ CLOSING_KEYWORD_PATTERN: Final[re.Pattern[str]] = re.compile(
 )
 BRANCH_ISSUE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?:^|[/_-])(\d{1,6})(?:[/_-]|$)")
 API_VERSION_HEADER: Final[str] = "X-GitHub-Api-Version"
-STACKS_API_VERSION: Final[str] = "2026-03-10"
+PINNED_API_VERSION: Final[str] = "2026-03-10"
 OPEN_STATE: Final[str] = "OPEN"
 
 
@@ -391,7 +391,7 @@ class GitHubWriter:
                 "POST",
                 f"repos/{self.repo.slug}/stacks",
                 "-H",
-                f"{API_VERSION_HEADER}: {STACKS_API_VERSION}",
+                f"{API_VERSION_HEADER}: {PINNED_API_VERSION}",
                 "--input",
                 "-",
             ],

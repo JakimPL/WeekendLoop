@@ -75,6 +75,8 @@ from weekend_loop.workbench import (
 )
 
 REPO_KEY: Final[str] = "demo"
+PER_TASK_USD: Final[float] = 6.0
+GATES_AT_ONCE: Final[int] = 1
 SLUG: Final[str] = "example-org/example-board"
 RECORDS_PATH: Final[str] = "logbook/records.py"
 README_PATH: Final[str] = "README.md (new)"
@@ -114,6 +116,8 @@ def write_parallel_policy(
     raw["budget"]["weekly_reset_at"] = (datetime.now(UTC) + timedelta(days=2)).isoformat()
     raw["budget"]["max_tasks"] = max_tasks
     raw["budget"]["envelope_usd"] = envelope_usd
+    raw["budget"]["per_task_usd"] = PER_TASK_USD
+    raw["resources"] = {"gates_at_once": GATES_AT_ONCE}
     raw["worker"]["parallel"] = parallel
     raw["worker"]["shared_paths"] = shared_paths
     demo = raw["repos"][REPO_KEY]

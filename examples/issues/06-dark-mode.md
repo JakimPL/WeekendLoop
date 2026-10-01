@@ -6,6 +6,7 @@ expected_verdict: null
 expected_ineligibility: open_linked_pull_request
 acceptance_test: null
 linked_pull_request_branch: feat/dark-mode
+blocked_by: []
 ---
 People chatting in the evening find the white page too bright, and most of them already run their
 computer in dark mode, so the page should follow that setting.
