@@ -6,6 +6,7 @@ from pathlib import Path
 from tests.unit.test_execute import build_origin
 from weekend_loop.models import Backend, IdentityPolicy, Record, RepoMode, RepoTarget
 from weekend_loop.workbench import (
+    TOKEN_VARIABLE,
     add_worktree,
     base_reference,
     clone_repository,
@@ -20,6 +21,7 @@ from weekend_loop.workbench import (
     remove_worktree,
     reset_worktree,
     run_git,
+    setup_environment,
     working_tree_is_dirty,
     write_askpass_script,
 )
@@ -168,3 +170,10 @@ def test_pruning_with_nothing_to_prune_changes_nothing(tmp_path: Path) -> None:
     checkout = clone(tmp_path)
     assert prune_worktrees(checkout.workbench, checkout.worktrees_root, checkout.environment) == []
     assert current_branch(checkout.workbench, checkout.environment) == "main"
+
+
+def test_setup_runs_without_the_repository_token() -> None:
+    environment = setup_environment()
+    assert TOKEN_VARIABLE not in environment
+    assert "GIT_ASKPASS" not in environment
+    assert environment["GIT_TERMINAL_PROMPT"] == "0"

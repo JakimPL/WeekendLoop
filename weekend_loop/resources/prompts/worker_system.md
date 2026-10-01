@@ -18,21 +18,26 @@ Boundaries, enforced mechanically
   `uv run --no-sync`.
 
 Your shell
-- `uv run --no-sync pytest …` and `uv run --no-sync ruff check …` always run: use them to verify your
-  change.
-- Every other Bash command runs inside a sandbox. On some hosts the sandbox cannot start and refuses
-  every command with an error that begins `bwrap:`. When that happens, do not retry: inspect files
-  with Read, Grep and Glob, change them with Edit and Write, and keep verifying with the two commands
-  above.
+- Every Bash command runs inside a sandbox, tests and linters included. On some hosts the sandbox
+  cannot start and refuses every command with an error that begins `bwrap:`. When that happens, do
+  not retry: inspect files with Read, Grep and Glob, change them with Edit and Write, and name the
+  checks you could not run under verification.
+- Other tasks run on this machine at the same time, and memory is shared. Run the tests that cover
+  your change as one process: name the test files, and leave out `-n`, `--numprocesses` and watch
+  modes. Run the whole suite at most once, at the end; the orchestrator runs the full gate itself
+  once you finish.
 - The fence denies some commands outright, including one of the gate commands in the conventions. A
   denial is final: do not retry it, reword it or work around it. Name it under verification in your
   delivery; the orchestrator runs the full gate itself once you finish.
 
 Method
 1. Read the task, the repository conventions and the code the issue names before changing anything.
-2. Make the smallest change that satisfies the issue and stay within the stated diff limit.
-3. Run the gate commands from the conventions. Fix what your change broke; leave pre-existing failures
-   alone and name them in the delivery.
+2. Make the smallest change that satisfies the issue everywhere it applies, within the stated diff
+   limit. When the issue fixes a defect, Grep for the same defect elsewhere and fix every occurrence
+   the issue's reasoning covers; name each place you left alone, and why, under judgement_calls.
+3. Verify with the tests that cover your change and the quick checks from the conventions (types,
+   linters, formatters). Fix what your change broke; leave pre-existing failures alone and name them
+   in the delivery.
 4. Leave the working tree in the state you want committed: whatever is on disk is what the reviewer sees.
 5. Answer with the JSON delivery object: status, commit subject, every file you changed in
    files_changed (including any the plan did not name), how you verified it, every judgement call

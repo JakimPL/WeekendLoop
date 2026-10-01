@@ -50,6 +50,25 @@ PROBE_REFERENCE: Final[str] = "refs/heads/weekend-loop/preflight-probe"
 ABSENT_COMMIT: Final[str] = "0" * 40
 WRITABLE_STATUS: Final[str] = "422"
 READ_ONLY_STATUS: Final[str] = "403"
+REFUSED_STATUS: Final[str] = "401"
+HIDDEN_STATUS: Final[str] = "404"
+VISIBLE_STATUS: Final[str] = "200"
+CONTENTS_LEVELS: Final[dict[RepoMode, str]] = {
+    RepoMode.DRY_RUN: "Read-only",
+    RepoMode.EXECUTE: "Read and write",
+}
+REFUSED_TOKEN_DETAIL: Final[str] = (
+    "GitHub refused the token (HTTP 401): it is revoked or expired; save a new one to {path}"
+)
+UNSEEN_REPOSITORY_DETAIL: Final[str] = (
+    "the token cannot see {slug}: add the repository under the token's Repository access"
+)
+NO_CONTENTS_DETAIL: Final[str] = (
+    "the token sees {slug} but has no access to its contents: set Contents to {level}"
+)
+UNREACHABLE_DETAIL: Final[str] = (
+    "the write probe answered HTTP {status}; the token cannot reach the repository"
+)
 STATUS_PATTERN: Final[re.Pattern[str]] = re.compile(r"\(HTTP (\d{3})\)")
 SANDBOX_PROBE: Final[tuple[str, ...]] = (
     "bwrap",
@@ -64,9 +83,16 @@ SANDBOX_PROBE: Final[tuple[str, ...]] = (
     "/proc",
     "true",
 )
+NPM_BINARY: Final[str] = "npm"
+SOCKET_FILTER_PACKAGE: Final[Path] = Path("@anthropic-ai") / "sandbox-runtime"
+SOCKET_FILTER_FIX: Final[str] = (
+    "sandboxed commands can open Unix sockets outside the masked runtime directory; install the "
+    "filter with `npm install -g @anthropic-ai/sandbox-runtime`"
+)
 SANDBOX_FIX: Final[str] = (
-    "only the fence's exempt commands will run; allow user namespaces for /usr/bin/bwrap with an "
-    "AppArmor profile (Ubuntu restricts them through kernel.apparmor_restrict_unprivileged_userns)"
+    "the worker's shell commands fail until bwrap may create user namespaces; allow them for "
+    "/usr/bin/bwrap with an AppArmor profile (Ubuntu restricts them through "
+    "kernel.apparmor_restrict_unprivileged_userns)"
 )
 
 
@@ -214,6 +240,31 @@ def check_sandbox_starts(required: bool) -> PreflightCheck:
     return failed(name, required, f"{reason}; {SANDBOX_FIX}")
 
 
+def global_node_modules() -> Path | None:
+    if shutil.which(NPM_BINARY) is None:
+        return None
+    completed = subprocess.run(
+        [NPM_BINARY, "root", "-g"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=VERSION_TIMEOUT_SECONDS,
+    )
+    root = completed.stdout.strip()
+    return Path(root) if completed.returncode == 0 and root else None
+
+
+def check_socket_filter(node_modules: Path | None, required: bool) -> PreflightCheck:
+    name = "sandbox socket filter"
+    if node_modules is None:
+        return failed(name, required, f"{NPM_BINARY} is not on PATH; {SOCKET_FILTER_FIX}")
+    package = node_modules / SOCKET_FILTER_PACKAGE
+    if package.is_dir():
+        return passed(name, required, f"Unix sockets are filtered by {package}")
+    return failed(name, required, f"{package} is missing; {SOCKET_FILTER_FIX}")
+
+
 def check_state_directory(state_directory: Path) -> PreflightCheck:
     name = "state directory"
     state_directory.mkdir(parents=True, exist_ok=True)
@@ -244,8 +295,8 @@ def check_repository_access(repo: RepoTarget, state_directory: Path) -> Prefligh
     status = write_probe_status(reader, repo.slug)
     writable = probe_outcome(status)
     if writable is None:
-        detail = f"the write probe answered HTTP {status}; the token cannot reach the repository"
-        return failed(name, True, detail)
+        read_status = read_probe_status(reader, repo.slug) if status == HIDDEN_STATUS else None
+        return failed(name, True, unreachable_detail(repo, status, read_status))
     if repo.mode is RepoMode.DRY_RUN and writable:
         return failed(name, True, "the token can push to a dry-run repository; scope it read-only")
     if repo.mode is RepoMode.EXECUTE and not writable:
@@ -269,6 +320,24 @@ def write_probe_status(reader: GitHubReader, slug: str) -> str:
     except subprocess.CalledProcessError as error:
         return status_of(error)
     return WRITABLE_STATUS
+
+
+def read_probe_status(reader: GitHubReader, slug: str) -> str:
+    try:
+        reader.run(["api", f"repos/{slug}", "--jq", ".full_name"])
+    except subprocess.CalledProcessError as error:
+        return status_of(error)
+    return VISIBLE_STATUS
+
+
+def unreachable_detail(repo: RepoTarget, write_status: str, read_status: str | None) -> str:
+    if write_status == REFUSED_STATUS:
+        return REFUSED_TOKEN_DETAIL.format(path=repo.token_path())
+    if write_status == HIDDEN_STATUS and read_status == HIDDEN_STATUS:
+        return UNSEEN_REPOSITORY_DETAIL.format(slug=repo.slug)
+    if write_status == HIDDEN_STATUS and read_status == VISIBLE_STATUS:
+        return NO_CONTENTS_DETAIL.format(slug=repo.slug, level=CONTENTS_LEVELS[repo.mode])
+    return UNREACHABLE_DETAIL.format(status=write_status)
 
 
 def status_of(error: subprocess.CalledProcessError) -> str:
@@ -322,6 +391,7 @@ def run_preflight(
         check_settings_file("worker settings", policy.settings.worker, writes),
         *[check_binary(f"sandbox {binary}", binary, writes) for binary in SANDBOX_BINARIES],
         check_sandbox_starts(False),
+        check_socket_filter(global_node_modules(), False),
         check_operator_identity(policy.identity),
         check_weekly_reset(policy.budget, now),
         check_usage_headroom(reading, policy.usage, now),

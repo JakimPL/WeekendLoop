@@ -259,6 +259,7 @@ class EventType(StrEnum):
     GATE_FINISHED = "gate_finished"
     ACCEPTANCE_FINISHED = "acceptance_finished"
     TASK_FINISHED = "task_finished"
+    TASK_FAILED = "task_failed"
     BRANCH_PUSHED = "branch_pushed"
     PULL_REQUEST_OPENED = "pull_request_opened"
     COMMENT_POSTED = "comment_posted"

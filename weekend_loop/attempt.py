@@ -10,6 +10,7 @@ from weekend_loop.allowance import UNTIMED_FIVE_HOUR_LIMIT, await_allowance
 from weekend_loop.models import (
     ActivityKind,
     ClaudeOutcome,
+    CommandResult,
     EventType,
     Halt,
     Issue,
@@ -29,6 +30,8 @@ from weekend_loop.workbench import (
     create_task_branch,
     reset_to_base,
     reset_worktree,
+    run_setup_commands,
+    setup_environment,
 )
 from weekend_loop.worker import (
     TaskGuidance,
@@ -53,6 +56,12 @@ class WorkerStep(StrEnum):
 class BenchKind(StrEnum):
     CHECKOUT = "checkout"
     WORKTREE = "worktree"
+
+
+class SetupFailedError(Exception):
+    def __init__(self, result: CommandResult) -> None:
+        super().__init__(f"setup command failed: {result.command} (exit {result.exit_code})")
+        self.result = result
 
 
 class TaskBench(Record):
@@ -99,11 +108,19 @@ def place_on_branch(bench: TaskBench, branch: str) -> None:
     create_task_branch(bench.workbench, branch, bench.git_settings)
 
 
+def prepare_tree(bench: TaskBench, branch: str) -> None:
+    place_on_branch(bench, branch)
+    results = run_setup_commands(bench.repo, bench.workbench, setup_environment())
+    failed = [result for result in results if result.exit_code != 0]
+    if failed:
+        raise SetupFailedError(failed[0])
+
+
 def start_branch(
     policy: Policy, bench: TaskBench, task: Task, issue: Issue, progress: RunProgress
 ) -> Task:
     branch = branch_name(policy.worker.branch_prefix, issue.number, issue.title)
-    place_on_branch(bench, branch)
+    prepare_tree(bench, branch)
     started = task.model_copy(
         update={"status": TaskStatus.WORKING, "branch": branch, "session_id": str(uuid.uuid4())}
     )

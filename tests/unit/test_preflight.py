@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -8,18 +9,28 @@ import pytest
 
 from tests.unit.conftest import issue_payload, write_github_data, write_test_policy
 from weekend_loop.claude_cli import read_oauth_token
-from weekend_loop.models import BudgetPolicy, CheckOutcome, UsagePolicy, UsageReading, UsageWindow
-from weekend_loop.policy import policy_at
+from weekend_loop.models import (
+    BudgetPolicy,
+    CheckOutcome,
+    Policy,
+    UsagePolicy,
+    UsageReading,
+    UsageWindow,
+)
+from weekend_loop.policy import policy_at, repo_target
 from weekend_loop.preflight import (
+    SOCKET_FILTER_PACKAGE,
     check_oauth_token,
     check_secret_file,
     check_settings_file,
+    check_socket_filter,
     check_usage_credits,
     check_usage_headroom,
     check_weekly_reset,
     probe_outcome,
     run_preflight,
     status_of,
+    unreachable_detail,
 )
 
 USAGE = UsagePolicy(
@@ -199,6 +210,32 @@ def test_a_probe_answer_names_what_the_token_can_do() -> None:
     assert probe_outcome("404") is None
 
 
+def test_an_unreachable_repository_names_the_access_the_token_lacks(
+    workspace_policy: Policy,
+) -> None:
+    execute_repo = repo_target(workspace_policy, "demo")
+    dry_run_repo = repo_target(workspace_policy, "dryrun")
+    refused = unreachable_detail(execute_repo, "401", None)
+    assert "revoked or expired" in refused and str(execute_repo.token_path()) in refused
+    assert "Repository access" in unreachable_detail(execute_repo, "404", "404")
+    assert unreachable_detail(execute_repo, "404", "200").endswith("set Contents to Read and write")
+    assert unreachable_detail(dry_run_repo, "404", "200").endswith("set Contents to Read-only")
+    assert "HTTP 500" in unreachable_detail(execute_repo, "500", None)
+
+
+def test_a_token_that_cannot_see_the_repository_is_told_where_to_add_it(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy = policy_at(prepare_environment(tmp_path, fake_binaries, push=True))
+    data_path = fake_binaries / "gh-data.json"
+    data = json.loads(data_path.read_text())
+    data_path.write_text(json.dumps({**data, "probe_status": "404", "read_status": "404"}))
+    report = run_preflight(policy, "demo", NOW, None)
+    (access,) = [check for check in report.checks if check.name.startswith("github access")]
+    assert access.outcome is CheckOutcome.FAILED
+    assert access.detail.endswith("add the repository under the token's Repository access")
+
+
 DIALOGUE = " Your OAuth token:\n\n sk-ant-oat01-example\n\n Store this token somewhere safe.\n"
 
 
@@ -226,3 +263,15 @@ def test_a_token_file_holding_the_setup_dialogue_blocks_preflight(
         if check.outcome is CheckOutcome.FAILED and check.required
     ]
     assert failures == ["claude oauth token"]
+
+
+def test_the_socket_filter_passes_once_its_package_is_installed(tmp_path: Path) -> None:
+    (tmp_path / SOCKET_FILTER_PACKAGE).mkdir(parents=True)
+    assert check_socket_filter(tmp_path, False).outcome is CheckOutcome.PASSED
+
+
+def test_a_missing_socket_filter_warns_and_names_the_install(tmp_path: Path) -> None:
+    for node_modules in (tmp_path, None):
+        check = check_socket_filter(node_modules, False)
+        assert check.outcome is CheckOutcome.FAILED and not check.required
+        assert "npm install -g @anthropic-ai/sandbox-runtime" in check.detail

@@ -1,4 +1,5 @@
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Final
@@ -8,16 +9,25 @@ from weekend_loop.resources import FenceName, fence_template_text
 
 OPERATOR_HOME_TOKEN: Final[str] = "__OPERATOR_HOME__"
 WORKSPACE_HOME_TOKEN: Final[str] = "__WORKSPACE_HOME__"
+RUNTIME_DIRECTORY_TOKEN: Final[str] = "__RUNTIME_DIR__"
+RUNTIME_DIRECTORY_VARIABLE: Final[str] = "XDG_RUNTIME_DIR"
+USER_RUNTIME_ROOT: Final[Path] = Path("/run/user")
 PERMISSIONS_KEY: Final[str] = "permissions"
 DENY_KEY: Final[str] = "deny"
 WRITING_TOOLS: Final[tuple[str, ...]] = ("Edit", "Write")
 NO_FORBIDDEN_PATHS: Final[list[str]] = []
 
 
+def user_runtime_directory() -> Path:
+    declared = os.environ.get(RUNTIME_DIRECTORY_VARIABLE)
+    return Path(declared) if declared else USER_RUNTIME_ROOT / str(os.getuid())
+
+
 def fence_tokens(workspace: Workspace, operator_home: Path) -> dict[str, str]:
     return {
         OPERATOR_HOME_TOKEN: str(operator_home),
         WORKSPACE_HOME_TOKEN: str(workspace.root),
+        RUNTIME_DIRECTORY_TOKEN: str(user_runtime_directory()),
     }
 
 

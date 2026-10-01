@@ -2,7 +2,7 @@
 
 ## Before the first run
 
-You need to set up two things yourself:
+You need to set up these things yourself:
 
 1. Run `claude setup-token` and save the one line it prints after "Your OAuth token" to
    `<workspace>/secrets/claude-oauth.token` with mode 0600. The command is interactive, so
@@ -25,6 +25,9 @@ You need to set up two things yourself:
    EOF
    sudo apparmor_parser -r /etc/apparmor.d/bwrap
    ```
+4. Install the sandbox's socket filter with `npm install -g @anthropic-ai/sandbox-runtime`. It
+   keeps the worker's commands from opening Unix sockets, such as your session bus. Preflight
+   warns "sandbox socket filter" while it is missing.
 
 A repository on the `github` backend also needs a fine-grained token with read and write access to
 Contents, Issues, Pull requests, Workflows and Metadata. Save it as
@@ -33,6 +36,9 @@ Contents at read: preflight refuses a token that can push, so a dry run is unabl
 anything, and raise it to read and write when you switch to `execute`. Preflight learns what the
 token can do by attempting a write that cannot succeed, a branch at a commit that does not exist,
 and reading the answer: a refusal means read-only, a validation error means the token can push.
+When GitHub answers "not found" instead, preflight reads the repository once more and names the
+setting to change: the token's Repository access when the token cannot see the repository, or its
+Contents permission when it can.
 The repository's `permissions` field would only describe the account, which for an owner always
 reads as push.
 
@@ -41,7 +47,8 @@ everything is in place.
 
 Before each run, Weekend Loop renders two sandbox fences under `<workspace>/agent-home/` from
 packaged templates. They use the home directory of the person running it. The sandbox blocks that
-person's `.ssh`, `.aws`, `.config/gh` and `.claude`, plus the workspace's secrets and state.
+person's `.ssh`, `.aws`, `.config/gh` and `.claude`, the workspace's secrets and state, and the
+session's runtime directory under `/run/user`, where the session bus lives.
 
 Usage limits need no setup. The agent reads your subscription's five-hour and seven-day usage from
 the CLI and stops the run before the limit. It also refuses to start when the account is using
@@ -86,11 +93,16 @@ the budget cannot cover another one. It writes the plan, the run state, the even
 
 **`execute`** refuses to run on a `dry_run` repository. For each approved task it:
 
-1. Resets the workbench to the base branch and creates `weekend/<issue>-<slug>`.
+1. Resets the workbench to the base branch, creates `weekend/<issue>-<slug>` and runs the
+   repository's setup commands on it, so the worker and the gate find what they build.
 2. Gives the issue to a worker that has no credentials and cannot run git.
 3. Commits whatever the worker left on disk, under the agent's identity.
 4. Checks the branch: the repository's gate commands, the diff policy (size, forbidden paths,
    binaries), a secret scan and, for the demo, the hidden acceptance test.
+
+A task whose git or setup command fails ends as abandoned, with the failed command in the event
+log, and the other tasks carry on. A failed setup also stops the run from starting new tasks,
+since the next task's setup would most likely fail the same way.
 
 If the worker asks a question instead of guessing, the tree stays clean and nothing is committed.
 `execute` pushes nothing. That is `publish`'s job.

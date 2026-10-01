@@ -71,6 +71,8 @@ if "acceptEdits" in arguments:
         target = Path.cwd() / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
+    for name in plan.get("remove", []):
+        (Path.cwd() / name).unlink()
     for message in plan["stream"]:
         emit(message)
     if plan.get("spawn_child"):
@@ -129,6 +131,9 @@ elif arguments[:3] == ["api", "-X", "POST"] and arguments[3].endswith("/git/refs
     print(json.dumps({"message": "probe", "status": status}))
     raise SystemExit(1)
 elif arguments[:1] == ["api"] and arguments[1].startswith("repos/"):
+    if data.get("read_status"):
+        print(json.dumps({"message": "Not Found", "status": data["read_status"]}))
+        raise SystemExit(1)
     print(json.dumps(data["push"]))
 elif arguments[:2] == ["pr", "list"]:
     print(json.dumps(data["pull_requests"]))

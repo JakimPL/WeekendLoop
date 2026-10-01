@@ -8,10 +8,12 @@ import pytest
 from weekend_loop.fences import (
     NO_FORBIDDEN_PATHS,
     OPERATOR_HOME_TOKEN,
+    RUNTIME_DIRECTORY_TOKEN,
     WORKSPACE_HOME_TOKEN,
     fence_tokens,
     render_fence,
     render_fences,
+    user_runtime_directory,
 )
 from weekend_loop.models import DEFAULT_FORBIDDEN_PATHS, Workspace
 from weekend_loop.resources import FenceName, ResourceKind, fence_template_text, packaged_text
@@ -32,6 +34,7 @@ def test_rendering_names_both_homes_and_leaves_no_placeholder(tmp_path: Path) ->
                 "deny": [
                     f"Read(/{OPERATOR_HOME_TOKEN}/.ssh/**)",
                     f"Read({WORKSPACE_HOME_TOKEN}/state/**)",
+                    f"Read({RUNTIME_DIRECTORY_TOKEN}/**)",
                 ]
             }
         }
@@ -41,6 +44,7 @@ def test_rendering_names_both_homes_and_leaves_no_placeholder(tmp_path: Path) ->
     )
     text = fence.read_text()
     assert OPERATOR_HOME_TOKEN not in text and WORKSPACE_HOME_TOKEN not in text
+    assert RUNTIME_DIRECTORY_TOKEN not in text
     assert "Read(//operator-home/.ssh/**)" in text
     assert f"Read({tmp_path}/state/**)" in text
 
@@ -93,6 +97,29 @@ def test_the_worker_sandbox_denies_the_operator_credential_files(tmp_path: Path)
     denied = {entry["path"] for entry in files if entry["mode"] == "deny"}
     assert {str(OPERATOR_HOME / directory) for directory in CREDENTIAL_DIRECTORIES} <= denied
     assert {str(tmp_path / directory) for directory in WORKSPACE_DIRECTORIES} <= denied
+
+
+def test_both_shipped_fences_hide_the_user_runtime_directory(tmp_path: Path) -> None:
+    runtime = user_runtime_directory()
+    for name, rendered in (
+        (FenceName.WORKER, tmp_path / "settings.json"),
+        (FenceName.ASSESSOR, tmp_path / "assessor.settings.json"),
+    ):
+        render_fence(fence_template_text(name), rendered, tokens_for(tmp_path), NO_FORBIDDEN_PATHS)
+        assert f"Read({runtime}/**)" in json.loads(rendered.read_text())["permissions"]["deny"]
+    sandbox = json.loads((tmp_path / "settings.json").read_text())["sandbox"]
+    denied = {entry["path"] for entry in sandbox["credentials"]["files"] if entry["mode"] == "deny"}
+    assert str(runtime) in denied
+    assert sandbox["network"]["allowAllUnixSockets"] is False
+
+
+def test_the_runtime_directory_follows_the_session_that_declares_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/4242")
+    assert user_runtime_directory() == Path("/run/user/4242")
+    monkeypatch.delenv("XDG_RUNTIME_DIR")
+    assert user_runtime_directory().parent == Path("/run/user")
 
 
 def test_rendering_both_fences_writes_both(tmp_path: Path) -> None:

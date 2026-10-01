@@ -4,7 +4,11 @@ import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
+import yaml
+
+from tests.support.fakes import install_fake
 from tests.unit.conftest import (
     ELIGIBLE,
     build_assessment,
@@ -45,6 +49,7 @@ from weekend_loop.models import (
     StopReason,
     TaskStatus,
     Verdict,
+    Workspace,
 )
 from weekend_loop.policy import policy_at
 from weekend_loop.runs import (
@@ -67,6 +72,19 @@ ACCEPTANCE_SCRIPT = (
     'from pathlib import Path\n\nassert "strip()" in Path("logbook/records.py").read_text()\n'
 )
 ACCEPTANCE_COMMAND = "python3 {test_file}"
+GENERATED_DIRECTORY = "generated"
+GENERATED_MARKER = f"{GENERATED_DIRECTORY}/marker.txt"
+MAKE_GENERATED = f"""#!/usr/bin/env python3
+from pathlib import Path
+
+marker = Path.cwd() / "{GENERATED_MARKER}"
+marker.parent.mkdir(parents=True, exist_ok=True)
+marker.write_text("built by setup")
+"""
+GENERATED_CHECK = (
+    'python3 -c "import pathlib, sys; '
+    f"sys.exit(0 if pathlib.Path('{GENERATED_MARKER}').is_file() else 1)\""
+)
 
 
 def run_git(arguments: list[str], cwd: Path) -> str:
@@ -136,6 +154,31 @@ def prepare(
     )
     seed_run(policy, issue_numbers)
     return policy, policy_path
+
+
+def ignore_in_origin(tmp_path: Path, pattern: str) -> None:
+    root = tmp_path / "origin"
+    (root / ".gitignore").write_text(f"{pattern}/\n")
+    run_git(["add", ".gitignore"], root)
+    run_git(
+        ["-c", "user.name=Seed", "-c", "user.email=seed@example.com", "commit", "-m", "ignore"],
+        root,
+    )
+
+
+def amend_demo_repo(policy_path: Path, changes: dict[str, Any]) -> None:
+    config = Workspace(root=policy_path).config_path
+    raw = yaml.safe_load(config.read_text())
+    raw["repos"]["demo"].update(changes)
+    config.write_text(yaml.safe_dump(raw))
+
+
+def build_on_setup(tmp_path: Path, fake_binaries: Path, policy_path: Path) -> None:
+    ignore_in_origin(tmp_path, GENERATED_DIRECTORY)
+    install_fake(fake_binaries, "make-generated", MAKE_GENERATED)
+    amend_demo_repo(
+        policy_path, {"setup_commands": ["make-generated"], "gate_commands": [GENERATED_CHECK]}
+    )
 
 
 def execute(policy_path: Path) -> int:
@@ -283,6 +326,26 @@ def test_the_attempt_leaves_a_complete_record_and_a_ledger_line(
         "acceptance_finished",
         "task_finished",
     ]
+
+
+def test_what_setup_builds_on_the_task_branch_reaches_the_gate(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare(
+        tmp_path,
+        fake_binaries,
+        ["weekend:auto"],
+        {"logbook/records.py": FIXED_RECORDS},
+        delivery_payload("done", "fix(records): treat an empty speed as unknown", []),
+        3,
+        [1],
+    )
+    build_on_setup(tmp_path, fake_binaries, policy_path)
+    assert execute(policy_path) == 0
+    state = load_run_state(open_run_directory(policy.state_dir, RUN_ID))
+    assert [task.status for task in state.tasks] == [TaskStatus.REVIEW]
+    gate = state.tasks[0].gate
+    assert gate is not None and GENERATED_MARKER not in gate.changed_paths
 
 
 def test_a_forbidden_path_fails_the_gate_and_the_branch_is_not_offered(

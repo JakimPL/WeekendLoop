@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import signal
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -19,6 +18,7 @@ from weekend_loop.models import (
     UsageReading,
     UsageWindow,
 )
+from weekend_loop.processes import exited, terminate
 
 CLAUDE_BINARY: Final[str] = "claude"
 SETPRIV_BINARY: Final[str] = "setpriv"
@@ -49,7 +49,6 @@ BUDGET_TERMINAL_REASON: Final[str] = "budget_exhausted"
 TOO_MANY_REQUESTS_STATUS: Final[int] = 429
 ERROR_TAIL_CHARACTERS: Final[int] = 800
 POLL_INTERVAL_SECONDS: Final[float] = 2.0
-TERMINATION_GRACE_SECONDS: Final[float] = 20.0
 INHERITED_ENVIRONMENT_KEYS: Final[tuple[str, ...]] = ("PATH", "LANG", "LC_ALL", "TZ")
 OAUTH_TOKEN_VARIABLE: Final[str] = "CLAUDE_CODE_OAUTH_TOKEN"
 # The CLI names each allowance window in its limit message: "You've hit your <label> · resets …".
@@ -195,29 +194,6 @@ def read_oauth_token(path: Path) -> str:
 
 def stderr_path(transcript: Path) -> Path:
     return transcript.with_suffix(STDERR_SUFFIX)
-
-
-def signal_group(process: subprocess.Popen[bytes], signal_number: int) -> None:
-    try:
-        os.killpg(process.pid, signal_number)
-    except ProcessLookupError:
-        return
-
-
-def exited(process: subprocess.Popen[bytes], seconds: float) -> bool:
-    try:
-        process.wait(timeout=seconds)
-    except subprocess.TimeoutExpired:
-        return False
-    return True
-
-
-def terminate(process: subprocess.Popen[bytes]) -> None:
-    signal_group(process, signal.SIGTERM)
-    if not exited(process, TERMINATION_GRACE_SECONDS):
-        signal_group(process, signal.SIGKILL)
-        process.wait()
-    signal_group(process, signal.SIGKILL)
 
 
 def wait_for_process(

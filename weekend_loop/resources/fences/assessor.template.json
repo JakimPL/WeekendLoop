@@ -18,7 +18,8 @@
       "Read(/__OPERATOR_HOME__/.ssh/**)",
       "Read(/__OPERATOR_HOME__/.aws/**)",
       "Read(/__OPERATOR_HOME__/.config/gh/**)",
-      "Read(/__OPERATOR_HOME__/.claude/**)"
+      "Read(/__OPERATOR_HOME__/.claude/**)",
+      "Read(__RUNTIME_DIR__/**)"
     ]
   },
   "attribution": {

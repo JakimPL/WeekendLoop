@@ -34,6 +34,7 @@
       "Read(/__OPERATOR_HOME__/.aws/**)",
       "Read(/__OPERATOR_HOME__/.config/gh/**)",
       "Read(/__OPERATOR_HOME__/.claude/**)",
+      "Read(__RUNTIME_DIR__/**)",
       "WebFetch",
       "WebSearch",
       "Agent",
@@ -49,7 +50,8 @@
       "allowedDomains": [
         "api.anthropic.com"
       ],
-      "strictAllowlist": true
+      "strictAllowlist": true,
+      "allowAllUnixSockets": false
     },
     "credentials": {
       "files": [
@@ -79,6 +81,10 @@
         },
         {
           "path": "__WORKSPACE_HOME__/agent-home",
+          "mode": "deny"
+        },
+        {
+          "path": "__RUNTIME_DIR__",
           "mode": "deny"
         }
       ],

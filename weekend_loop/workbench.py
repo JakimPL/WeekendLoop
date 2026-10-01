@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Final
 
 from weekend_loop.board import local_repository_path
-from weekend_loop.commands import DEFAULT_COMMAND_TIMEOUT_SECONDS, run_command
+from weekend_loop.commands import (
+    DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    command_environment,
+    run_command,
+)
 from weekend_loop.models import Backend, CommandResult, IdentityPolicy, RepoTarget, Workspace
 
 GIT_BINARY: Final[str] = "git"
@@ -22,6 +26,7 @@ BRANCH_SLUG_CHARACTERS: Final[int] = 40
 INHERITED_ENVIRONMENT_KEYS: Final[tuple[str, ...]] = ("PATH", "HOME", "LANG", "LC_ALL", "TZ")
 ASKPASS_SCRIPT: Final[str] = f'#!/bin/sh\nprintf "%s" "${TOKEN_VARIABLE}"\n'
 WORKTREE_LIST_PREFIX: Final[str] = "worktree "
+SETUP_ENVIRONMENT: Final[dict[str, str]] = {"GIT_TERMINAL_PROMPT": "0"}
 
 
 def clone_url(repo: RepoTarget, state_directory: Path) -> str:
@@ -157,13 +162,20 @@ def create_task_branch(workbench: Path, branch: str, environment: dict[str, str]
     run_git(["checkout", "-B", branch], cwd=workbench, environment=environment)
 
 
+def setup_environment() -> dict[str, str]:
+    return command_environment(SETUP_ENVIRONMENT)
+
+
 def run_setup_commands(
     repo: RepoTarget, workbench: Path, environment: dict[str, str]
 ) -> list[CommandResult]:
-    return [
-        run_command(command, workbench, environment, DEFAULT_COMMAND_TIMEOUT_SECONDS)
-        for command in repo.setup_commands
-    ]
+    results: list[CommandResult] = []
+    for command in repo.setup_commands:
+        result = run_command(command, workbench, environment, DEFAULT_COMMAND_TIMEOUT_SECONDS)
+        results.append(result)
+        if result.exit_code != 0:
+            break
+    return results
 
 
 def working_tree_is_dirty(workbench: Path, environment: dict[str, str]) -> bool:

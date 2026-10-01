@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -8,7 +9,14 @@ from typing import Final
 
 from weekend_loop.acceptance import acceptance_map_path, load_acceptance_map, run_acceptance_test
 from weekend_loop.allowance import await_allowance
-from weekend_loop.attempt import BenchKind, TaskBench, drive_worker, task_prompt, work_on
+from weekend_loop.attempt import (
+    BenchKind,
+    SetupFailedError,
+    TaskBench,
+    drive_worker,
+    task_prompt,
+    work_on,
+)
 from weekend_loop.backends import BoardReader, repository_token
 from weekend_loop.briefing import guidance_for, read_briefing
 from weekend_loop.claude_cli import agent_environment, read_oauth_token
@@ -61,7 +69,6 @@ from weekend_loop.workbench import (
     prune_worktrees,
     registered_worktrees,
     remove_worktree,
-    run_setup_commands,
     write_askpass_script,
 )
 from weekend_loop.worker import TaskGuidance, abandoned_delivery, load_worker_prompts
@@ -94,7 +101,15 @@ CONFIRMED_VERDICTS: Final[tuple[Verdict, ...]] = (Verdict.EXECUTE, Verdict.PROPO
 OUTSIDE_LIMITS_REASON: Final[str] = (
     "the assessment is outside the worker's effort, risk or blocker limits"
 )
-SETUP_FAILED_TEMPLATE: Final[str] = "setup command failed: {command}"
+TASK_FAILURES: Final[tuple[type[Exception], ...]] = (
+    SetupFailedError,
+    subprocess.CalledProcessError,
+    subprocess.TimeoutExpired,
+    OSError,
+)
+FAILED_COMMAND_TEMPLATE: Final[str] = "{command} failed with exit {exit_code}: {reason}"
+TIMED_OUT_COMMAND_TEMPLATE: Final[str] = "{command} ran out of time after {seconds:.0f}s"
+FAILURE_LINE_CHARACTERS: Final[int] = 200
 WAVE_DETAIL_TEMPLATE: Final[str] = "wave {number}: {issues}"
 OVERLAP_DETAIL_TEMPLATE: Final[str] = "#{first} and #{second} both changed {paths}"
 
@@ -327,13 +342,13 @@ def ledger_entry(state: RunState, task: Task, policy: Policy) -> LedgerEntry:
 
 def prepare_execution(
     policy: Policy, repo: RepoTarget, repo_key: str
-) -> tuple[Path, dict[str, str], list[CommandResult]]:
+) -> tuple[Path, dict[str, str]]:
     render_fences(policy.workspace, Path.home(), repo.forbidden_paths)
     token = repository_token(repo)
     workbench = prepare_checkout(repo, repo_key, policy.workspace, token)
     git_settings = git_environment(token, write_askpass_script(policy.state_dir))
     prune_worktrees(workbench, policy.workspace.worktrees_path(repo_key), git_settings)
-    return workbench, git_settings, run_setup_commands(repo, workbench, git_settings)
+    return workbench, git_settings
 
 
 def current_issues(reader: BoardReader, limit: int) -> dict[int, Issue]:
@@ -379,15 +394,7 @@ def execute_run(
     if halt is not None:
         return close_execution(progress, halt, [], 0)
     approved = approved_tasks(policy, progress.state, issues, run_directory)
-    workbench, git_settings, setup = prepare_execution(policy, repo, repo_key)
-    failed_setup = [result for result in setup if result.exit_code != 0]
-    if failed_setup:
-        note = f"setup command failed: {failed_setup[0].command}"
-        append_event(run_directory, EventType.RUN_ABORTED, note, None)
-        progress.note(note)
-        progress.stop(StopReason.SETUP_FAILED, note)
-        progress.enter_phase(RunPhase.ABORTED)
-        return progress.save()
+    workbench, git_settings = prepare_execution(policy, repo, repo_key)
     bench = task_bench(policy, repo, workbench, git_settings, BenchKind.CHECKOUT)
     return work_through(
         policy, bench, repo_key, approved, issues, progress, acceptance_tests, supervisor, deadline
@@ -480,9 +487,20 @@ def finish_interrupted_tasks(
 ) -> Halt | None:
     working = [task for task in progress.state.tasks if task.status is TaskStatus.WORKING]
     for task in working:
-        halt = finish_interrupted_task(
-            policy, repo, repo_key, task, issues, acceptance_tests, supervisor, progress, deadline
-        )
+        try:
+            halt = finish_interrupted_task(
+                policy,
+                repo,
+                repo_key,
+                task,
+                issues,
+                acceptance_tests,
+                supervisor,
+                progress,
+                deadline,
+            )
+        except TASK_FAILURES as error:
+            halt = failed_task_halt(policy, progress, supervisor, task.issue_number, error)
         if halt is not None:
             return halt
     return None
@@ -658,6 +676,74 @@ def work_task(
     return updated, halt if halt is not None else outcome_halt(outcome.outcome)
 
 
+def failure_reason(error: Exception) -> str:
+    if isinstance(error, subprocess.CalledProcessError):
+        output = error.stderr if isinstance(error.stderr, str) else ""
+        lines = output.strip().splitlines()
+        return FAILED_COMMAND_TEMPLATE.format(
+            command=command_text(error.cmd),
+            exit_code=error.returncode,
+            reason=lines[-1][:FAILURE_LINE_CHARACTERS] if lines else "no output",
+        )
+    if isinstance(error, subprocess.TimeoutExpired):
+        return TIMED_OUT_COMMAND_TEMPLATE.format(
+            command=command_text(error.cmd), seconds=error.timeout
+        )
+    return str(error)
+
+
+def command_text(command: str | list[str]) -> str:
+    return command if isinstance(command, str) else " ".join(command)
+
+
+def failed_task_halt(
+    policy: Policy,
+    progress: RunProgress,
+    supervisor: RunSupervisor,
+    issue_number: int,
+    error: Exception,
+) -> Halt | None:
+    reason = failure_reason(error)
+    supervisor.leave(issue_number)
+    append_event(progress.run_directory, EventType.TASK_FAILED, reason, issue_number)
+    progress.note(f"#{issue_number}: {reason}")
+    abandoned = progress.task(issue_number).model_copy(update={"status": TaskStatus.ABANDONED})
+    record_finished(policy, progress, abandoned)
+    if isinstance(error, SetupFailedError):
+        return Halt(reason=StopReason.SETUP_FAILED, detail=reason)
+    return None
+
+
+def guarded_work_task(
+    policy: Policy,
+    bench: TaskBench,
+    task: Task,
+    issue: Issue,
+    guidance: TaskGuidance,
+    acceptance_tests: dict[int, Path],
+    supervisor: RunSupervisor,
+    progress: RunProgress,
+    deadline: datetime,
+    observed_costs: list[float],
+) -> tuple[Task, Halt | None]:
+    try:
+        return work_task(
+            policy,
+            bench,
+            task,
+            issue,
+            guidance,
+            acceptance_tests,
+            supervisor,
+            progress,
+            deadline,
+            observed_costs,
+        )
+    except TASK_FAILURES as error:
+        halt = failed_task_halt(policy, progress, supervisor, task.issue_number, error)
+        return progress.task(task.issue_number), halt
+
+
 def allowance_halt(
     policy: Policy,
     bench: TaskBench,
@@ -703,7 +789,7 @@ def work_in_turn(
             return halt
         inbox = read_inbox(progress.run_directory.inbox)
         briefing = read_briefing(policy.state_dir, progress.state.repo_key)
-        _, halt = work_task(
+        _, halt = guarded_work_task(
             policy,
             bench,
             task,
@@ -737,22 +823,9 @@ def open_worktrees(
     repo_key: str,
     tasks: list[Task],
     issues: dict[int, Issue],
-    progress: RunProgress,
-) -> tuple[list[TaskBench], Halt | None]:
+) -> list[TaskBench]:
     fetch_base(bench.repo, bench.workbench, bench.git_settings)
-    benches: list[TaskBench] = []
-    for task in tasks:
-        worktree_bench = worktree_for(policy, bench, repo_key, issues[task.issue_number])
-        benches.append(worktree_bench)
-        setup = run_setup_commands(bench.repo, worktree_bench.workbench, bench.git_settings)
-        failed = [result for result in setup if result.exit_code != 0]
-        if failed:
-            note = SETUP_FAILED_TEMPLATE.format(command=failed[0].command)
-            append_event(progress.run_directory, EventType.RUN_ABORTED, note, task.issue_number)
-            progress.note(note)
-            close_worktrees(policy, bench, repo_key)
-            return [], Halt(reason=StopReason.SETUP_FAILED, detail=note)
-    return benches, None
+    return [worktree_for(policy, bench, repo_key, issues[task.issue_number]) for task in tasks]
 
 
 def close_worktrees(policy: Policy, bench: TaskBench, repo_key: str) -> None:
@@ -807,15 +880,45 @@ def run_wave(
         progress.put_task(task)
     progress.save()
     append_event(progress.run_directory, EventType.WAVE_STARTED, wave_detail(number, tasks), None)
-    benches, halt = open_worktrees(policy, bench, repo_key, tasks, issues, progress)
-    if halt is not None:
-        return halt
+    try:
+        benches = open_worktrees(policy, bench, repo_key, tasks, issues)
+        halts = work_wave_tasks(
+            policy,
+            benches,
+            tasks,
+            issues,
+            progress,
+            acceptance_tests,
+            supervisor,
+            deadline,
+            observed_costs,
+        )
+        note_overlaps(policy, progress, tasks)
+    finally:
+        close_worktrees(policy, bench, repo_key)
+    if halts:
+        append_event(progress.run_directory, EventType.LIMIT_REACHED, halts[0].detail, None)
+        return halts[0]
+    return None
+
+
+def work_wave_tasks(
+    policy: Policy,
+    benches: list[TaskBench],
+    tasks: list[Task],
+    issues: dict[int, Issue],
+    progress: RunProgress,
+    acceptance_tests: dict[int, Path],
+    supervisor: RunSupervisor,
+    deadline: datetime,
+    observed_costs: list[float],
+) -> list[Halt]:
     inbox = read_inbox(progress.run_directory.inbox)
     briefing = read_briefing(policy.state_dir, progress.state.repo_key)
     with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
         futures = [
             pool.submit(
-                work_task,
+                guarded_work_task,
                 policy,
                 worktree_bench,
                 task,
@@ -832,13 +935,7 @@ def run_wave(
             )
             for task, worktree_bench in zip(tasks, benches, strict=True)
         ]
-        halts = [halt for _, halt in (future.result() for future in futures) if halt is not None]
-    note_overlaps(policy, progress, tasks)
-    close_worktrees(policy, bench, repo_key)
-    if halts:
-        append_event(progress.run_directory, EventType.LIMIT_REACHED, halts[0].detail, None)
-        return halts[0]
-    return None
+        return [halt for _, halt in (future.result() for future in futures) if halt is not None]
 
 
 def work_in_waves(

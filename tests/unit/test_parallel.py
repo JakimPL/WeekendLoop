@@ -26,6 +26,7 @@ from tests.unit.test_execute import (
     ISSUE_BODY,
     ISSUE_TITLE,
     RUN_ID,
+    build_on_setup,
     build_origin,
     execute,
     run_git,
@@ -228,11 +229,49 @@ def test_tasks_with_disjoint_paths_share_a_wave_each_on_its_own_worktree(
     assert run_git(["status", "--porcelain"], bench).strip() == ""
     branches = [task.branch for task in state.tasks if task.branch is not None]
     assert [branch_commits(policy, branch) for branch in branches] == [1, 1]
-    runs = setup_runs(fake_binaries)
-    assert runs[0] == bench.resolve()
-    assert sorted(runs[1:]) == sorted((worktrees / branch).resolve() for branch in branches)
+    assert sorted(setup_runs(fake_binaries)) == sorted(
+        (worktrees / branch).resolve() for branch in branches
+    )
     ledger = (policy.state_dir / "ledger.jsonl").read_text().splitlines()
     assert sorted(json.loads(line)["issue_number"] for line in ledger) == [1, 2]
+
+
+def test_what_setup_builds_in_each_worktree_reaches_its_gate(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare_parallel(
+        tmp_path, fake_binaries, {1: [RECORDS_PATH], 2: [README_PATH]}, 2, [], 3, 15.0
+    )
+    write_plans_by_issue(
+        fake_binaries, {1: {RECORDS_PATH: FIXED_RECORDS}, 2: {README_FILE: "# Logbook\n"}}
+    )
+    build_on_setup(tmp_path, fake_binaries, policy_path)
+    assert execute(policy_path) == 0
+    assert [task.status for task in latest(policy).tasks] == [TaskStatus.REVIEW] * 2
+
+
+def test_a_task_whose_checkout_breaks_ends_alone_and_its_sibling_carries_on(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare_parallel(
+        tmp_path, fake_binaries, {1: [RECORDS_PATH], 2: [README_PATH]}, 2, [], 3, 15.0
+    )
+    delivery = delivery_payload("done", FIX_SUBJECT, [])
+    broken = worker_plan({RECORDS_PATH: FIXED_RECORDS}, [worker_result(delivery, 1.2, "done")], 0)
+    sound = worker_plan({README_FILE: "# Logbook\n"}, [worker_result(delivery, 1.2, "done")], 0)
+    (fake_binaries / "claude-worker.json").write_text(
+        json.dumps({"1": {**broken, "remove": [".git"]}, "2": sound, "default": sound})
+    )
+    assert execute(policy_path) == 0
+    state = latest(policy)
+    assert [task.status for task in state.tasks] == [TaskStatus.ABANDONED, TaskStatus.REVIEW]
+    assert any(
+        event.startswith("task_failed: git status --porcelain failed with exit 128")
+        for event in events_of(policy)
+    )
+    ledger = (policy.state_dir / "ledger.jsonl").read_text().splitlines()
+    assert sorted(json.loads(line)["issue_number"] for line in ledger) == [1, 2]
+    assert not policy.workspace.worktrees_path(REPO_KEY).exists()
 
 
 def test_tasks_that_overlap_take_turns_in_separate_waves(

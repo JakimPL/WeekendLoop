@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Final
 
 from weekend_loop.models import CommandResult
+from weekend_loop.processes import terminate
 
 OUTPUT_TAIL_CHARACTERS: Final[int] = 2000
 TIMEOUT_EXIT_CODE: Final[int] = 124
@@ -29,27 +30,29 @@ def run_command(
     command: str, working_directory: Path, environment: dict[str, str], timeout_seconds: int
 ) -> CommandResult:
     started_at = time.monotonic()
-    try:
-        completed = subprocess.run(
-            shlex.split(command),
-            cwd=working_directory,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired:
-        return CommandResult(
-            command=command,
-            exit_code=TIMEOUT_EXIT_CODE,
-            duration_seconds=time.monotonic() - started_at,
-            output_tail=f"command exceeded {timeout_seconds}s",
-        )
+    with subprocess.Popen(
+        shlex.split(command),
+        cwd=working_directory,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            terminate(process)
+            return CommandResult(
+                command=command,
+                exit_code=TIMEOUT_EXIT_CODE,
+                duration_seconds=time.monotonic() - started_at,
+                output_tail=f"command exceeded {timeout_seconds}s",
+            )
+    output = f"{stdout.decode(errors='replace')}\n{stderr.decode(errors='replace')}"
     return CommandResult(
         command=command,
-        exit_code=completed.returncode,
+        exit_code=process.returncode,
         duration_seconds=time.monotonic() - started_at,
-        output_tail=output_tail(f"{completed.stdout}\n{completed.stderr}"),
+        output_tail=output_tail(output),
     )
