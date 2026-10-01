@@ -1,8 +1,8 @@
 import subprocess
 from typing import Final
 
-from weekend_loop.board import open_board
 from weekend_loop.github import GhCommands
+from weekend_loop.local_github.store import open_board
 from weekend_loop.models import Backend, BoardLabel, LabelPolicy, Policy, Record, RepoTarget
 
 LABEL_COLOUR: Final[str] = "5319E7"

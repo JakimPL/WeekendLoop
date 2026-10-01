@@ -7,12 +7,6 @@ from pathlib import Path
 from typing import Final
 
 from weekend_loop.acceptance import acceptance_map_path
-from weekend_loop.board import (
-    LocalBoard,
-    board_directory,
-    create_board,
-    local_repository_path,
-)
 from weekend_loop.briefing import prepared_path
 from weekend_loop.demo.seed import (
     OVERLAP_COMMIT_MESSAGE,
@@ -28,14 +22,26 @@ from weekend_loop.demo.seed import (
     write_acceptance_map,
 )
 from weekend_loop.labels import board_labels
+from weekend_loop.local_github.paths import (
+    board_root,
+    local_repository_path,
+    repository_directory,
+)
+from weekend_loop.local_github.store import (
+    LocalBoard,
+    create_board,
+    write_account,
+)
 from weekend_loop.models import (
     Backend,
+    BoardAccount,
     BoardIssue,
     BoardPullRequest,
     IssueState,
     LabelPolicy,
     Policy,
     Record,
+    RepoMode,
     RepoTarget,
     Workspace,
 )
@@ -155,7 +161,8 @@ def seed_board(
     labels: LabelPolicy,
     issues: list[SeedIssue],
 ) -> dict[str, int]:
-    board = create_board(state_directory, repo.slug, OWNER_LOGIN)
+    write_account(board_root(state_directory), BoardAccount(login=OWNER_LOGIN))
+    board = create_board(board_root(state_directory), repo.slug, repo.mode is RepoMode.EXECUTE)
     board.write_index(board.read_index().model_copy(update={"labels": board_labels(labels)}))
     issue_numbers: dict[str, int] = {}
     for issue in issues:
@@ -173,7 +180,7 @@ def seed_board(
 
 def removable_paths(policy: Policy, repo: RepoTarget, repo_key: str) -> list[Path]:
     return [
-        board_directory(policy.state_dir, repo.slug),
+        repository_directory(board_root(policy.state_dir), repo.slug),
         policy.workspace.workbench_path(repo_key),
         policy.workspace.worktrees_path(repo_key),
         policy.state_dir / RUNS_DIRECTORY_NAME,

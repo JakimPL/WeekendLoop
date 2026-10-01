@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Final, Protocol
 
+from weekend_loop.github_queries import BLOCKERS_QUERY
 from weekend_loop.guards import assert_branch_allowed, assert_labels_allowed
 from weekend_loop.models import (
     IdentityPolicy,
@@ -34,16 +35,6 @@ CLOSING_KEYWORD_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s+#(\d+)", re.IGNORECASE
 )
 BRANCH_ISSUE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?:^|[/_-])(\d{1,6})(?:[/_-]|$)")
-BLOCKERS_QUERY: Final[str] = """
-query($owner: String!, $name: String!, $endCursor: String) {
-  repository(owner: $owner, name: $name) {
-    issues(states: OPEN, first: 100, after: $endCursor) {
-      nodes { number blockedBy(first: 50) { nodes { number state } } }
-      pageInfo { hasNextPage endCursor }
-    }
-  }
-}
-"""
 API_VERSION_HEADER: Final[str] = "X-GitHub-Api-Version"
 STACKS_API_VERSION: Final[str] = "2026-03-10"
 OPEN_STATE: Final[str] = "OPEN"

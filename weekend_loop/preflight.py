@@ -15,7 +15,6 @@ from weekend_loop.admission import (
     read_memory,
     tasks_at_once,
 )
-from weekend_loop.board import local_repository_path, open_board
 from weekend_loop.claude_cli import (
     SETPRIV_BINARY,
     TIMEOUT_BINARY,
@@ -32,6 +31,8 @@ from weekend_loop.limits import (
     read_usage,
     seven_day_decision,
 )
+from weekend_loop.local_github.paths import local_repository_path
+from weekend_loop.local_github.store import open_board
 from weekend_loop.models import (
     Backend,
     BudgetPolicy,

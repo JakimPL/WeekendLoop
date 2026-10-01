@@ -1,20 +1,18 @@
 from pathlib import Path
 from typing import Final
 
-from weekend_loop.board import (
-    REPOSITORY_DIRECTORY_NAME,
-    LocalBoard,
-    issue_url,
-    local_repository_path,
-    now_utc,
-    open_board,
-    pull_request_url,
-)
 from weekend_loop.github import (
     pull_requests_by_issue,
     push_refspec,
 )
 from weekend_loop.guards import assert_branch_allowed, assert_labels_allowed
+from weekend_loop.local_github.paths import (
+    REPOSITORY_DIRECTORY_NAME,
+    issue_url,
+    local_repository_path,
+    pull_request_url,
+)
+from weekend_loop.local_github.store import LocalBoard, now_utc, open_board, read_account
 from weekend_loop.models import (
     BoardComment,
     BoardIssue,
@@ -73,7 +71,7 @@ class LocalBoardReader:
         return self.board
 
     def viewer_login(self) -> str:
-        return self.require_board().read_index().viewer_login
+        return read_account(self.require_board().directory.parent).login
 
     def open_pull_requests(self, limit: int) -> list[PullRequest]:
         found = self.require_board().open_pull_requests()[:limit]
@@ -149,7 +147,12 @@ class LocalBoardWriter:
     def comment_on_issue(self, issue_number: int, body: str) -> None:
         self.board.append_comment(
             issue_number,
-            BoardComment(author=self.identity.git_author_name, created_at=now_utc(), body=body),
+            BoardComment(
+                id=self.board.take_comment_id(),
+                author=self.identity.git_author_name,
+                created_at=now_utc(),
+                body=body,
+            ),
         )
 
     def add_labels(self, issue_number: int, labels: list[str]) -> None:

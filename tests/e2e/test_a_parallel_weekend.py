@@ -6,8 +6,8 @@ import pytest
 
 from tests.e2e.conftest import EXECUTE_ISSUES, REPO_KEY, write_worker_plans_by_issue
 from tests.e2e.test_a_weekend import weekend
-from weekend_loop.board import open_board
 from weekend_loop.cli import EXIT_OK
+from weekend_loop.local_github.store import open_board
 from weekend_loop.models import RunPhase, TaskStatus, Workspace
 from weekend_loop.policy import policy_at
 from weekend_loop.runs import latest_run_id, load_run_state, open_run_directory

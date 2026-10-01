@@ -16,11 +16,12 @@ from tests.support.fakes import (
 )
 from tests.unit.conftest import base_policy, issue_payload, write_github_data, write_policy
 from weekend_loop.backends import BoardReader, BoardWriter, reader_for, writer_for
-from weekend_loop.board import create_board, open_board
 from weekend_loop.demo.board import board_issue
 from weekend_loop.demo.seed import SeedIssue
 from weekend_loop.labels import board_labels
-from weekend_loop.models import Backend, Policy, RepoTarget
+from weekend_loop.local_github.paths import board_root
+from weekend_loop.local_github.store import create_board, open_board, write_account
+from weekend_loop.models import Backend, BoardAccount, Policy, RepoTarget
 from weekend_loop.policy import policy_at, repo_target
 
 BACKENDS = (Backend.LOCAL, Backend.GITHUB)
@@ -84,7 +85,8 @@ def seed_issue(number: int) -> SeedIssue:
 
 
 def build_local(policy: Policy, repo: RepoTarget, numbers: list[int]) -> None:
-    board = create_board(policy.state_dir, repo.slug, OPERATOR)
+    write_account(board_root(policy.state_dir), BoardAccount(login=OPERATOR))
+    board = create_board(board_root(policy.state_dir), repo.slug, True)
     board.write_index(board.read_index().model_copy(update={"labels": board_labels(policy.labels)}))
     for number in numbers:
         board.take_number()

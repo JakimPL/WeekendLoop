@@ -3,10 +3,10 @@ from typing import Final
 
 from tests.unit.test_local_board import FIRST_ISSUE, seeded
 from weekend_loop.backends import reader_for, writer_for
-from weekend_loop.board import LocalBoard, now_utc, open_board
 from weekend_loop.briefing import answers_of, notes_of, question_key, read_briefing
 from weekend_loop.github import signed
 from weekend_loop.intake import ingest_answers, replied_issues
+from weekend_loop.local_github.store import LocalBoard, now_utc, open_board, read_account
 from weekend_loop.models import BoardComment, Intake, IssueIntake, Policy, RepoTarget
 from weekend_loop.policy import policy_at, repo_target
 from weekend_loop.questions import PREPARE_LEAD, render_question_comment
@@ -27,11 +27,14 @@ def asked(tmp_path: Path, label: bool) -> tuple[Policy, RepoTarget, LocalBoard]:
 
 
 def reply(board: LocalBoard, author: str, body: str) -> None:
-    board.append_comment(FIRST_ISSUE, BoardComment(author=author, created_at=now_utc(), body=body))
+    comment = BoardComment(
+        id=board.take_comment_id(), author=author, created_at=now_utc(), body=body
+    )
+    board.append_comment(FIRST_ISSUE, comment)
 
 
 def operator(board: LocalBoard) -> str:
-    return board.read_index().viewer_login
+    return read_account(board.directory.parent).login
 
 
 def ingest(policy: Policy, repo: RepoTarget) -> Intake:

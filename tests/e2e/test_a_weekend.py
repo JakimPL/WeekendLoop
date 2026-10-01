@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.conftest import REPO_KEY
-from weekend_loop.board import open_board
 from weekend_loop.cli import EXIT_OK, main
+from weekend_loop.local_github.store import open_board
 from weekend_loop.models import RunPhase, TaskStatus, Workspace
 from weekend_loop.policy import policy_at
 from weekend_loop.questions import is_agent_comment

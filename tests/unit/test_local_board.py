@@ -5,10 +5,11 @@ import pytest
 
 from tests.unit.conftest import base_policy, write_policy
 from weekend_loop.backends import reader_for, with_foreign_activity, writer_for
-from weekend_loop.board import local_repository_path, open_board
 from weekend_loop.briefing import write_prepared
 from weekend_loop.cli import EXIT_OK, main
 from weekend_loop.github import signed
+from weekend_loop.local_github.paths import local_repository_path
+from weekend_loop.local_github.store import open_board
 from weekend_loop.models import Backend, IssueState, PreparedSession
 from weekend_loop.policy import policy_at, repo_target
 from weekend_loop.preflight import run_preflight

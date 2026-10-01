@@ -7,13 +7,13 @@ import subprocess
 from pathlib import Path
 from typing import Final
 
-from weekend_loop.board import local_repository_path
 from weekend_loop.commands import (
     DEFAULT_COMMAND_TIMEOUT_SECONDS,
     command_environment,
     run_command,
 )
 from weekend_loop.confinement import Confinement
+from weekend_loop.local_github.paths import local_repository_path
 from weekend_loop.models import Backend, CommandResult, IdentityPolicy, RepoTarget, Workspace
 
 GIT_BINARY: Final[str] = "git"

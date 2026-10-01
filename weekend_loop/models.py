@@ -367,6 +367,7 @@ class BoardLabel(Record):
 
 
 class BoardComment(Record):
+    id: int
     author: str
     created_at: datetime
     body: str
@@ -399,10 +400,15 @@ class BoardPullRequest(Record):
 
 
 class BoardIndex(Record):
-    viewer_login: str
     next_number: int
+    next_comment_id: int
+    contents_writable: bool
     labels: list[BoardLabel]
-    stacks: list[list[int]] = Field(default_factory=list)
+    stacks: list[list[int]]
+
+
+class BoardAccount(Record):
+    login: str
 
 
 class SpecSignals(Record):
