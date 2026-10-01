@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
 from weekend_loop.backends import BoardReader, BoardWriter, repository_token
+from weekend_loop.dependencies import stack_chains
 from weekend_loop.github import signed
 from weekend_loop.models import (
     EventType,
@@ -33,9 +35,22 @@ PULL_REQUEST_TITLE_FALLBACK: Final[str] = "weekend: {title}"
 UNFINISHED_TITLE_TEMPLATE: Final[str] = "[unfinished] {title}"
 MERGE_CARE_SUFFIX: Final[str] = " [merge care]"
 MERGE_CARE_TEMPLATE: Final[str] = (
-    "This branch and #{issue_number} changed the same files: {paths}. "
-    "Merge them one at a time and run the tests after each."
+    "This branch and #{issue_number} both changed {paths}, and git cannot merge them on its own. "
+    "Merge one, then resolve the other against it and run the tests."
 )
+CLEAN_OVERLAP_TEMPLATE: Final[str] = (
+    "This branch and #{issue_number} both changed {paths}; git merges the two cleanly. "
+    "Run the tests after merging the second."
+)
+STACKED_TEMPLATE: Final[str] = (
+    "This branch builds on #{parent} ({parent_pull_request}), so its changes start where that "
+    "pull request ends. Merge #{parent} first. When GitHub shows the two as a stack, merging the "
+    "lower one moves this one onto `{base}`. Otherwise merge #{parent} with a merge commit and "
+    "delete its branch, and GitHub moves this pull request onto `{base}`."
+)
+STACK_LINKED_TEMPLATE: Final[str] = "{chain} form a stack on GitHub"
+STACK_UNLINKED_TEMPLATE: Final[str] = "{chain} stay separate pull requests: {reason}"
+PULL_REQUEST_NUMBER_SEPARATOR: Final[str] = "/pull/"
 UNFINISHED_BANNER: Final[str] = (
     "> **Unfinished — do not merge.** The worker stopped before it finished this issue. "
     "The changes passed the gate and are offered for inspection only."
@@ -47,7 +62,37 @@ UNFINISHED_LEAD: Final[str] = (
 )
 
 
-def pull_request_body(task: Task, run_id: str, footer: str) -> str:
+def stacked_section(task: Task, parent_pull_request: str | None, base_branch: str) -> list[str]:
+    if task.stacked_on is None:
+        return []
+    text = STACKED_TEMPLATE.format(
+        parent=task.stacked_on,
+        parent_pull_request=parent_pull_request or "its pull request",
+        base=base_branch,
+    )
+    return ["", f"## Stacked on #{task.stacked_on}", "", text]
+
+
+def overlap_sections(task: Task) -> list[str]:
+    care = [overlap for overlap in task.overlaps if not overlap.merges_cleanly]
+    clean = [overlap for overlap in task.overlaps if overlap.merges_cleanly]
+    lines: list[str] = []
+    for title, overlaps, template in (
+        ("## Merge with care", care, MERGE_CARE_TEMPLATE),
+        ("## Shares files with", clean, CLEAN_OVERLAP_TEMPLATE),
+    ):
+        if overlaps:
+            lines.extend(["", title, ""])
+            lines.extend(
+                template.format(issue_number=overlap.issue_number, paths=", ".join(overlap.paths))
+                for overlap in overlaps
+            )
+    return lines
+
+
+def pull_request_body(
+    task: Task, run_id: str, footer: str, base_branch: str, parent_pull_request: str | None
+) -> str:
     delivery = task.delivery
     gate = task.gate
     banner = [UNFINISHED_BANNER, ""] if task.status is TaskStatus.UNFINISHED else []
@@ -69,14 +114,8 @@ def pull_request_body(task: Task, run_id: str, footer: str) -> str:
     if delivery is not None and delivery.questions:
         lines.extend(["", "## Open questions", ""])
         lines.extend(f"- {question}" for question in delivery.questions)
-    if task.overlaps:
-        lines.extend(["", "## Merge with care", ""])
-        lines.extend(
-            MERGE_CARE_TEMPLATE.format(
-                issue_number=overlap.issue_number, paths=", ".join(overlap.paths)
-            )
-            for overlap in task.overlaps
-        )
+    lines.extend(stacked_section(task, parent_pull_request, base_branch))
+    lines.extend(overlap_sections(task))
     return signed("\n".join(lines), footer, run_id)
 
 
@@ -99,7 +138,8 @@ def pull_request_title(task: Task) -> str:
     title = subject if subject else PULL_REQUEST_TITLE_FALLBACK.format(title=task.title)
     if task.status is TaskStatus.UNFINISHED:
         title = UNFINISHED_TITLE_TEMPLATE.format(title=title)
-    return f"{title}{MERGE_CARE_SUFFIX}" if task.overlaps else title
+    needs_care = any(not overlap.merges_cleanly for overlap in task.overlaps)
+    return f"{title}{MERGE_CARE_SUFFIX}" if needs_care else title
 
 
 def delivery_label(task: Task, policy: Policy) -> str:
@@ -140,13 +180,18 @@ def open_pull_request(
     run_id: str,
     workbench: Path,
     git_settings: dict[str, str],
+    repo: RepoTarget,
+    parent_pull_request: str | None,
 ) -> str:
     writer.push_branch(branch, policy.worker.branch_prefix, workbench, git_settings)
     append_event(run_directory, EventType.BRANCH_PUSHED, branch, task.issue_number)
     pull_request_url = writer.open_draft_pull_request(
         branch,
         pull_request_title(task),
-        pull_request_body(task, run_id, policy.identity.comment_footer),
+        pull_request_body(
+            task, run_id, policy.identity.comment_footer, repo.base_branch, parent_pull_request
+        ),
+        task.base_branch or repo.base_branch,
     )
     append_event(run_directory, EventType.PULL_REQUEST_OPENED, pull_request_url, task.issue_number)
     return pull_request_url
@@ -162,6 +207,8 @@ def publish_delivery(
     workbench: Path,
     git_settings: dict[str, str],
     existing_pull_requests: dict[str, str],
+    repo: RepoTarget,
+    parent_pull_request: str | None,
 ) -> Task:
     branch = task.branch
     if branch is None:
@@ -169,7 +216,16 @@ def publish_delivery(
     pull_request_url = existing_pull_requests.get(branch)
     if pull_request_url is None:
         pull_request_url = open_pull_request(
-            writer, policy, task, branch, run_directory, run_id, workbench, git_settings
+            writer,
+            policy,
+            task,
+            branch,
+            run_directory,
+            run_id,
+            workbench,
+            git_settings,
+            repo,
+            parent_pull_request,
         )
     if not announced(reader.issue_comments(task.issue_number), pull_request_url):
         writer.comment_on_issue(
@@ -242,10 +298,11 @@ def publish_run(
         pull_request.head_branch: pull_request.url
         for pull_request in reader.open_pull_requests(limit)
     }
-    for task in state.tasks:
+    for task in publish_order(state.tasks):
         if task.published_at is not None:
             continue
         if publishable(task):
+            parent = progress.task(task.stacked_on) if task.stacked_on is not None else None
             published = publish_delivery(
                 writer,
                 reader,
@@ -256,6 +313,8 @@ def publish_run(
                 workbench,
                 git_settings,
                 existing,
+                repo,
+                parent.pull_request_url if parent is not None else None,
             )
         elif task.status in QUESTION_STATUSES:
             published = publish_question(writer, reader, policy, task, run_directory, state.run_id)
@@ -263,7 +322,55 @@ def publish_run(
             continue
         progress.put_task(published.model_copy(update={"published_at": datetime.now(UTC)}))
         progress.save()
+    link_stacks(writer, progress, set(existing.values()))
     return post_digest(writer, reader, policy, repo, progress.state, run_directory, limit)
+
+
+def stack_depth(task: Task, tasks: dict[int, Task]) -> int:
+    depth = 0
+    current = task
+    while current.stacked_on is not None and current.stacked_on in tasks and depth < len(tasks):
+        current = tasks[current.stacked_on]
+        depth += 1
+    return depth
+
+
+def publish_order(tasks: list[Task]) -> list[Task]:
+    by_number = {task.issue_number: task for task in tasks}
+    return sorted(tasks, key=lambda task: (stack_depth(task, by_number), task.issue_number))
+
+
+def pull_request_number(url: str | None) -> int | None:
+    if url is None or PULL_REQUEST_NUMBER_SEPARATOR not in url:
+        return None
+    tail = url.rsplit(PULL_REQUEST_NUMBER_SEPARATOR, 1)[1]
+    return int(tail) if tail.isdigit() else None
+
+
+def link_stacks(writer: BoardWriter, progress: RunProgress, earlier: set[str]) -> None:
+    parents = {
+        task.issue_number: task.stacked_on
+        for task in progress.state.tasks
+        if task.stacked_on is not None
+    }
+    for chain in stack_chains(parents):
+        urls = [progress.task(number).pull_request_url for number in chain]
+        numbers = [pull_request_number(url) for url in urls]
+        opened = [number for number in numbers if number is not None]
+        if len(opened) != len(chain) or all(url in earlier for url in urls):
+            continue
+        named = " → ".join(f"#{number}" for number in chain)
+        try:
+            writer.link_stack(opened)
+        except subprocess.CalledProcessError as error:
+            reason = (error.stderr or "").strip().splitlines()
+            detail = STACK_UNLINKED_TEMPLATE.format(
+                chain=named, reason=reason[-1] if reason else "no answer"
+            )
+            append_event(progress.run_directory, EventType.STACK_LINKED, detail, chain[0])
+            continue
+        detail = STACK_LINKED_TEMPLATE.format(chain=named)
+        append_event(progress.run_directory, EventType.STACK_LINKED, detail, chain[0])
 
 
 def existing_digest(issues: list[Issue], title: str, footer: str) -> str | None:

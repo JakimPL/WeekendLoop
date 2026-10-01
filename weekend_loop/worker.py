@@ -31,7 +31,8 @@ DELIVERY_FALLBACK: Final[str] = (
     ", and print that same JSON object as your final message if the structured answer fails"
 )
 NO_ANSWERS_TEXT: Final[str] = "None yet; nobody is available during the run."
-NO_WAVE_PATHS_TEXT: Final[str] = "none; this task runs alone"
+NO_OTHER_PATHS_TEXT: Final[str] = "none named"
+NO_PARENT_TEXT: Final[str] = "nothing else in this run"
 NO_SHARED_PATHS_TEXT: Final[str] = "none named"
 ABANDONED_SUMMARY_TEMPLATE: Final[str] = "No delivery arrived; the run ended as {outcome}."
 RESUME_PROMPT: Final[str] = (
@@ -55,7 +56,9 @@ class WorkerPrompts(Record):
 
 class TaskGuidance(Record):
     answers: list[str]
-    wave_paths: list[str]
+    other_paths: list[str]
+    parent: str | None
+    base_branch: str
 
 
 def conventions_text(repo: RepoTarget, overrides: Path) -> str:
@@ -98,9 +101,10 @@ def render_task(
         issue_title=issue.title,
         repo_slug=repo.slug,
         branch=branch,
-        base_branch=repo.base_branch,
+        base_branch=guidance.base_branch,
         max_diff_lines=max_diff_lines,
-        wave_paths=listed(guidance.wave_paths, NO_WAVE_PATHS_TEXT),
+        parent=guidance.parent if guidance.parent is not None else NO_PARENT_TEXT,
+        other_paths="; ".join(guidance.other_paths) or NO_OTHER_PATHS_TEXT,
         shared_paths=listed(shared_paths, NO_SHARED_PATHS_TEXT),
         delivery_fallback=DELIVERY_FALLBACK,
         plan=assessment.plan.strip(),

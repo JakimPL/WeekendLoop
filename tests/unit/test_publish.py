@@ -270,10 +270,10 @@ def test_the_pull_request_title_falls_back_to_the_issue_title() -> None:
         build_assessment(Verdict.EXECUTE, Effort.XS, Risk.TESTS, [], []),
     )
     assert pull_request_title(task) == "weekend: Empty speed field"
-    assert "Refs #1" in pull_request_body(task, "run-7", FOOTER)
+    assert "Refs #1" in pull_request_body(task, "run-7", FOOTER, "main", None)
 
 
-def test_a_branch_that_changed_a_file_with_a_wave_sibling_says_so_in_the_pull_request() -> None:
+def test_a_branch_git_cannot_merge_with_another_says_so_in_the_pull_request() -> None:
     task = build_task(
         1,
         "Empty speed field",
@@ -282,6 +282,32 @@ def test_a_branch_that_changed_a_file_with_a_wave_sibling_says_so_in_the_pull_re
         build_assessment(Verdict.EXECUTE, Effort.XS, Risk.TESTS, [], []),
     ).model_copy(update={"overlaps": [Overlap(issue_number=2, paths=["logbook/records.py"])]})
     assert pull_request_title(task) == "weekend: Empty speed field [merge care]"
-    body = pull_request_body(task, "run-7", FOOTER)
+    body = pull_request_body(task, "run-7", FOOTER, "main", None)
     assert "## Merge with care" in body
-    assert "This branch and #2 changed the same files: logbook/records.py." in body
+    assert (
+        "This branch and #2 both changed logbook/records.py, and git cannot merge them on its own."
+        in body
+    )
+    clean = task.model_copy(
+        update={
+            "overlaps": [Overlap(issue_number=2, paths=["logbook/records.py"], merges_cleanly=True)]
+        }
+    )
+    assert pull_request_title(clean) == "weekend: Empty speed field"
+    assert "## Shares files with" in pull_request_body(clean, "run-7", FOOTER, "main", None)
+
+
+def test_a_stacked_branch_names_its_parent_and_the_order_to_merge_in() -> None:
+    task = build_task(
+        11,
+        "Who starts",
+        TaskStatus.REVIEW,
+        ELIGIBLE,
+        build_assessment(Verdict.EXECUTE, Effort.S, Risk.BEHAVIOUR, [], []),
+    ).model_copy(update={"stacked_on": 5, "base_branch": "weekend/5-archived"})
+    body = pull_request_body(
+        task, "run-7", FOOTER, "features", "https://github.com/owner/repo/pull/41"
+    )
+    assert "## Stacked on #5" in body
+    assert "This branch builds on #5 (https://github.com/owner/repo/pull/41)" in body
+    assert "moves this pull request onto `features`" in body

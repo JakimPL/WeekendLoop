@@ -126,7 +126,7 @@ class LocalBoardWriter:
         self.assert_remote_is_the_policy_repository(workbench, environment)
         run_git(["push", "origin", push_refspec(branch)], cwd=workbench, environment=environment)
 
-    def open_draft_pull_request(self, branch: str, title: str, body: str) -> str:
+    def open_draft_pull_request(self, branch: str, title: str, body: str, base: str) -> str:
         number = self.board.take_number()
         self.board.write_pull_request(
             BoardPullRequest(
@@ -134,7 +134,7 @@ class LocalBoardWriter:
                 title=title,
                 body=body,
                 head_branch=branch,
-                base_branch=self.repo.base_branch,
+                base_branch=base,
                 author=self.identity.git_author_name,
                 draft=True,
                 state=IssueState.OPEN,
@@ -142,6 +142,9 @@ class LocalBoardWriter:
             )
         )
         return pull_request_url(self.board.slug, number)
+
+    def link_stack(self, pull_request_numbers: list[int]) -> None:
+        self.board.link_stack(pull_request_numbers)
 
     def comment_on_issue(self, issue_number: int, body: str) -> None:
         self.board.append_comment(

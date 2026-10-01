@@ -52,7 +52,9 @@ weekend_loop/worker.py      one credential-less `claude -p` per approved task, u
 weekend_loop/gate.py        diff policy, secret scan and the repository's own verification commands
 weekend_loop/acceptance.py  hidden tests the worker never sees, run against the delivered branch
 weekend_loop/execute.py     the execute phase: consent, branch, worker, commit, gate, ledger
-weekend_loop/waves.py       groups the approved tasks into waves whose touched paths are disjoint
+weekend_loop/scheduler.py   the work queue: which approved task starts next, and when a child waits
+weekend_loop/dependencies.py what each issue builds on, and which tasks stack on another
+weekend_loop/overlaps.py    paths that branches share, and the pairs git cannot merge on its own
 weekend_loop/admission.py   the memory pool: who may start or gate now, and on which processors
 weekend_loop/confinement.py runs a command in a capped systemd scope, and reads what it took
 weekend_loop/run_resources.py the run's admission and the cap of each step of a task
@@ -109,23 +111,26 @@ The operator workspace, not the checkout, holds everything a run reads and write
 
 ## Working in parallel
 
-With `worker.parallel` above 1, the execute phase works several tasks at once. The model:
+The execute phase works its approved tasks from one pool. The model:
 
 - One branch per task, `weekend/<n>-<slug>`, on a git worktree of its own under
-  `work/<repo>-worktrees/<branch>`, made from `origin/<base>` with the repository's setup commands
-  run inside it. The worker, the gate and the hidden acceptance test run in that worktree; the
-  shared checkout stays on the base branch, and `publish` pushes from it.
-- Waves scheduled by the assessed `touched_paths`. `waves.py` takes the approved tasks in their
-  execution order and puts a task into the wave being formed when its paths are disjoint from
-  everything the wave already claims; otherwise it starts the next wave. A path covers itself and
-  everything under it. A task that touches a `shared_paths` entry, or whose assessment names no
-  paths, takes a wave of its own. Two tasks in one wave never change the same hand-written file.
-- `worker.shared_paths` for files many tasks append to: a changelog, a generated catalog, a docs
-  table, a list of routes. A task that touches one runs alone, so the additions land one after
-  another; at merge the operator takes both sides and regenerates what is generated.
-- A check after the fact. The gate records the files each branch actually changed; when two tasks
-  of one wave changed the same hand-written file, both record the overlap, the digest lists the
-  pair under "Merge with care", and the pull request title carries "[merge care]". Publishing goes
-  ahead; the reviewer merges such branches one at a time.
+  `work/<repo>-worktrees/<branch>`, with the repository's setup commands run inside it. The worker,
+  the gate and the hidden acceptance test run in that worktree; the shared checkout stays on the
+  base branch, runs the baseline gate and the allowance probes, and `publish` pushes from it.
+- A continuous scheduler (`scheduler.py`). It starts the next task whenever a slot is free, up to
+  `worker.parallel` and what the memory pool allows (`admission.py`). Tasks that unblock others go
+  first, then by effort and issue number.
+- Dependencies (`dependencies.py`). They come from GitHub's blocked-by links and the assessor's
+  `depends_on`. A task on exactly one parent the run also works is stacked: it starts after the
+  parent reaches review, from the parent's branch. Its diff is measured against that branch, and
+  its pull request targets it. Stacks are linear, at most `worker.max_stack_depth` deep, and
+  registered as native GitHub stacks when they are published.
+- Workers keep apart by being told the paths of every other task outside their own stack. Every
+  branch starts from the base branch or from its parent, so the order tasks run in changes nothing
+  in what they produce.
+- A check after the fact (`overlaps.py`). Every pair of branches that changed the same hand-written
+  file is merged in memory with `git merge-tree`. A clean merge is noted in the digest's "Merge
+  order"; a conflict marks both pull requests "[merge care]" and lists the pair under "Merge with
+  care". Files under `worker.shared_paths` stay out of the check.
 - One lock on the run's records. Every write to `run.json`, the events, the ledger and the pulse
   goes through it, and the pulse lists every task in flight.

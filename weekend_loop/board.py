@@ -74,6 +74,10 @@ class LocalBoard:
         self.write_index(index.model_copy(update={"next_number": index.next_number + 1}))
         return index.next_number
 
+    def link_stack(self, pull_request_numbers: list[int]) -> None:
+        index = self.read_index()
+        self.write_index(index.model_copy(update={"stacks": [*index.stacks, pull_request_numbers]}))
+
     def issues(self) -> list[BoardIssue]:
         directory = self.directory / ISSUES_DIRECTORY_NAME
         if not directory.is_dir():

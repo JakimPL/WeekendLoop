@@ -113,6 +113,7 @@ STEP_LABELS: Final[dict[EventType, str]] = {
     EventType.TASK_FINISHED: "Task finished",
     EventType.TASK_FAILED: "Task failed",
     EventType.MEMORY_WAITED: "Waiting for memory",
+    EventType.STACK_LINKED: "Stack linked",
     EventType.BASELINE_FINISHED: "Base branch checked",
     EventType.BRANCH_PUSHED: "Branch pushed",
     EventType.PULL_REQUEST_OPENED: "Draft PR opened",

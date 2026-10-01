@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Final
 
+from weekend_loop.dependencies import stack_chains
 from weekend_loop.limits import render_usage
 from weekend_loop.models import (
     CommandResult,
     Confidence,
     Effort,
     RunState,
-    SoloReason,
     Task,
     TaskStatus,
     Verdict,
@@ -172,16 +172,17 @@ def render_triage_plan(state: RunState, repo_slug: str) -> str:
 
 
 DIGEST_TITLE_TEMPLATE: Final[str] = "Weekend run {date}"
+STACK_ADVICE: Final[str] = "each builds on the one before it; merge them in this order"
+MERGE_CARE_ADVICE: Final[str] = (
+    "git cannot merge them on its own; merge one, then resolve the other against it"
+)
+CLEAN_MERGE_ADVICE: Final[str] = "git merges them cleanly; run the tests after the second"
 DIGEST_DATE_FORMAT: Final[str] = "%Y-%m-%d"
 REVIEW_STATUSES: Final[tuple[TaskStatus, ...]] = (TaskStatus.REVIEW,)
 UNFINISHED_STATUSES: Final[tuple[TaskStatus, ...]] = (TaskStatus.UNFINISHED,)
 PUBLISHED_STATUSES: Final[tuple[TaskStatus, ...]] = (TaskStatus.REVIEW, TaskStatus.UNFINISHED)
 QUESTION_STATUSES: Final[tuple[TaskStatus, ...]] = (TaskStatus.NEEDS_INPUT,)
 LEFT_STATUSES: Final[tuple[TaskStatus, ...]] = (TaskStatus.ABANDONED, TaskStatus.ASSESSED)
-SOLO_REASON_TEXT: Final[dict[SoloReason, str]] = {
-    SoloReason.SHARED_PATH: "alone: it touches a shared path",
-    SoloReason.NO_TOUCHED_PATHS: "alone: its assessment names no paths",
-}
 
 
 def digest_title(state: RunState) -> str:
@@ -242,33 +243,31 @@ def render_left_section(tasks: list[Task]) -> str:
     return "\n".join(lines)
 
 
-def waves_of_run(state: RunState) -> dict[int, list[Task]]:
-    grouped: dict[int, list[Task]] = {}
-    for task in state.tasks:
-        if task.wave is not None:
-            grouped.setdefault(task.wave, []).append(task)
-    return dict(sorted(grouped.items()))
-
-
-def render_wave_line(number: int, tasks: list[Task]) -> str:
-    members = ", ".join(f"#{task.issue_number}" for task in tasks)
-    reasons = [SOLO_REASON_TEXT[task.solo_reason] for task in tasks if task.solo_reason is not None]
-    suffix = f" ({reasons[0]})" if reasons else ""
-    return f"- wave {number}: {members}{suffix}"
-
-
-def render_overlap_lines(state: RunState) -> list[str]:
+def render_overlap_lines(state: RunState, clean: bool) -> list[str]:
+    advice = CLEAN_MERGE_ADVICE if clean else MERGE_CARE_ADVICE
     return [
         f"- #{task.issue_number} and #{overlap.issue_number} both changed "
-        f"{', '.join(overlap.paths)}: merge them one at a time and run the tests after each"
+        f"{', '.join(overlap.paths)}: {advice}"
         for task in state.tasks
         for overlap in task.overlaps
-        if task.issue_number < overlap.issue_number
+        if task.issue_number < overlap.issue_number and overlap.merges_cleanly is clean
     ]
 
 
+def render_merge_order_section(state: RunState) -> list[str]:
+    stacks = [
+        f"- {' → '.join(f'#{number}' for number in chain)}: {STACK_ADVICE}"
+        for chain in stack_chains(
+            {task.issue_number: task.stacked_on for task in state.tasks if task.stacked_on}
+        )
+    ]
+    clean = render_overlap_lines(state, True)
+    lines = [*stacks, *clean]
+    return ["## Merge order", "", *lines, ""] if lines else []
+
+
 def render_merge_care_section(state: RunState) -> list[str]:
-    lines = render_overlap_lines(state)
+    lines = render_overlap_lines(state, False)
     if not lines:
         return []
     return ["## Merge with care", "", *lines, ""]
@@ -298,14 +297,6 @@ def render_memory_section(state: RunState) -> list[str]:
     )
     lines = [line for subject, commands in subjects if (line := memory_line(subject, commands))]
     return ["## Memory", "", *lines, ""] if lines else []
-
-
-def render_waves_section(state: RunState) -> list[str]:
-    waves = waves_of_run(state)
-    if not waves:
-        return []
-    lines = [render_wave_line(number, tasks) for number, tasks in waves.items()]
-    return ["## Waves", "", *lines, ""]
 
 
 def render_digest(state: RunState, repo_slug: str) -> str:
@@ -341,8 +332,8 @@ def render_digest(state: RunState, repo_slug: str) -> str:
             "",
             render_left_section(left),
             "",
+            *render_merge_order_section(state),
             *render_merge_care_section(state),
-            *render_waves_section(state),
             *render_memory_section(state),
         ]
     )

@@ -132,6 +132,10 @@ elif arguments[:2] == ["api", "graphql"]:
         raise SystemExit(1)
     for number, blocked_by in data.get("blockers", {}).items():
         print(json.dumps({"number": int(number), "blocked_by": blocked_by}))
+elif arguments[:3] == ["api", "-X", "POST"] and arguments[3].endswith("/stacks"):
+    with (here / "gh-stacks.jsonl").open("a") as stacks:
+        stacks.write(json.dumps(json.loads(sys.stdin.read())) + "\\n")
+    print(json.dumps({"number": 1}))
 elif arguments[:3] == ["api", "-X", "POST"] and arguments[3].endswith("/git/refs"):
     status = data.get("probe_status") or ("422" if data["push"] else "403")
     print(json.dumps({"message": "probe", "status": status}))
@@ -149,7 +153,10 @@ elif arguments[:2] == ["issue", "view"]:
     print(json.dumps({"comments": data["comments"].get(arguments[2], [])}))
 elif arguments[:2] == ["pr", "create"]:
     log_body(arguments)
-    print("https://github.com/owner/repo/pull/42")
+    created = here / "gh-pull-request-count.txt"
+    count = int(created.read_text()) if created.is_file() else 0
+    created.write_text(str(count + 1))
+    print(f"https://github.com/owner/repo/pull/{42 + count}")
 elif arguments[:2] == ["issue", "comment"]:
     log_body(arguments)
     print("https://github.com/owner/repo/issues/1#issuecomment-7")

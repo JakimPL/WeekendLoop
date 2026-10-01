@@ -2,8 +2,9 @@
 
 Repository: {repo_slug}
 Branch: {branch} (based on {base_branch})
+Builds on: {parent}
 Diff limit: {max_diff_lines} changed lines
-Other tasks worked in this wave touch: {wave_paths}; stay off them.
+Other tasks of this run change: {other_paths}. Stay off those paths.
 Shared files, appended to and never rewritten: {shared_paths}
 Delivery: answer with the JSON delivery object{delivery_fallback}
 

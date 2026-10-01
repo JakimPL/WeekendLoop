@@ -111,7 +111,9 @@ def test_an_opened_pull_request_records_the_branch_it_points_at(tmp_path: Path) 
     policy = policy_at(seeded(tmp_path))
     repo = repo_target(policy, "demo")
     writer = writer_for(repo, policy.state_dir, policy.identity, policy.labels.namespace)
-    url = writer.open_draft_pull_request("weekend/1-empty-speed", "Fix the parser", "Refs #1")
+    url = writer.open_draft_pull_request(
+        "weekend/1-empty-speed", "Fix the parser", "Refs #1", "weekend/5-archived"
+    )
     board = open_board(policy.state_dir, repo.slug)
     opened = [
         pull_request
@@ -120,7 +122,10 @@ def test_an_opened_pull_request_records_the_branch_it_points_at(tmp_path: Path) 
     ]
     assert len(opened) == 1
     assert opened[0].draft and opened[0].state is IssueState.OPEN
+    assert opened[0].base_branch == "weekend/5-archived"
     assert str(opened[0].number) in url
+    writer.link_stack([3, opened[0].number])
+    assert board.read_index().stacks == [[3, opened[0].number]]
 
 
 def test_preflight_asks_for_no_github_credential_when_the_board_is_local(tmp_path: Path) -> None:

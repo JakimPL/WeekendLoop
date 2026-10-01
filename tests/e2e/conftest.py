@@ -91,6 +91,20 @@ def write_assistant_plans(binaries: Path) -> None:
     )
 
 
+def write_worker_plans_by_issue(binaries: Path, files: dict[int, dict[str, str]]) -> None:
+    plans = {
+        str(number): {
+            "files": changed,
+            "stream": [result(delivery("changed what the issue asks", [], "done"), WORKER_COST)],
+            "exit_code": 0,
+        }
+        for number, changed in files.items()
+    }
+    (binaries / "claude-worker.json").write_text(
+        json.dumps({**plans, "default": next(iter(plans.values()))})
+    )
+
+
 @pytest.fixture
 def binaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     directory = tmp_path / "bin"

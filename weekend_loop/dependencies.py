@@ -121,6 +121,18 @@ class DependencyGraph:
         )
 
 
+def stack_chains(parents: dict[int, int]) -> list[list[int]]:
+    children = {parent: child for child, parent in parents.items()}
+    roots = sorted({parent for parent in parents.values() if parent not in parents})
+    chains: list[list[int]] = []
+    for root in roots:
+        chain = [root]
+        while chain[-1] in children and children[chain[-1]] not in chain:
+            chain.append(children[chain[-1]])
+        chains.append(chain)
+    return chains
+
+
 def dependency_verdicts(
     tasks: list[Task],
     issues: dict[int, Issue],

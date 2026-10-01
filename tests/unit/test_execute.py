@@ -17,6 +17,8 @@ from tests.unit.conftest import (
     delivery_payload,
     issue_payload,
     usage_event,
+    worker_plan,
+    worker_result,
     write_execute_policy,
     write_github_data,
     write_probe_plan,
@@ -291,7 +293,8 @@ def test_an_approved_issue_becomes_a_branch_a_reviewer_can_take(
     assert task.gate.passed
     assert task.cost_usd == 1.3
     identity = policy.identity
-    log = run_git(["log", "-1", "--format=%an <%ae>%n%s"], workbench_of(policy))
+    assert task.branch is not None
+    log = run_git(["log", "-1", "--format=%an <%ae>%n%s", task.branch], workbench_of(policy))
     assert f"{identity.git_author_name} <{identity.git_author_email}>" in log
     assert "fix(records): treat an empty speed as unknown" in log
 
@@ -701,7 +704,7 @@ def test_a_dependency_the_assessor_names_is_no_blocker_of_its_own(workspace_poli
     assert within_worker_limits(named, workspace_policy, False)
 
 
-def test_an_issue_that_builds_on_another_of_the_run_waits_for_it(
+def test_an_issue_that_builds_on_another_of_the_run_goes_after_it_one_task_at_a_time(
     tmp_path: Path, fake_binaries: Path
 ) -> None:
     policy, policy_path = prepare(
@@ -720,13 +723,23 @@ def test_an_issue_that_builds_on_another_of_the_run_waits_for_it(
     built_on = child.model_copy(
         update={"assessment": child.assessment.model_copy(update={"depends_on": [1]})}
     )
-    save_run_state(run_directory, state.model_copy(update={"tasks": [parent, built_on]}))
+    save_run_state(run_directory, state.model_copy(update={"tasks": [built_on, parent]}))
+    delivery = delivery_payload("done", "docs: name the speed field", [])
+    readme = worker_plan({"README.md": "# Logbook\n"}, [worker_result(delivery, 1.2, "done")], 0)
+    fix = worker_plan(
+        {"logbook/records.py": FIXED_RECORDS}, [worker_result(delivery, 1.2, "done")], 0
+    )
+    (fake_binaries / "claude-worker.json").write_text(
+        json.dumps({"1": fix, "2": readme, "default": fix})
+    )
     assert execute(policy_path) == 0
     finished = load_run_state(run_directory)
-    assert [task.status for task in finished.tasks] == [TaskStatus.REVIEW, TaskStatus.ASSESSED]
-    skipped = [
-        json.loads(line)["detail"]
+    statuses = {task.issue_number: task.status for task in finished.tasks}
+    assert statuses == {1: TaskStatus.REVIEW, 2: TaskStatus.REVIEW}
+    started = [
+        json.loads(line)["issue_number"]
         for line in run_directory.events_path.read_text().splitlines()
-        if json.loads(line)["event"] == "task_skipped"
+        if json.loads(line)["event"] == "task_started"
     ]
-    assert skipped == ["builds on #1, which this run works first"]
+    assert started == [1, 2]
+    assert {task.issue_number: task.stacked_on for task in finished.tasks}[2] == 1

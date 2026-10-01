@@ -28,6 +28,8 @@ INHERITED_ENVIRONMENT_KEYS: Final[tuple[str, ...]] = ("PATH", "HOME", "LANG", "L
 ASKPASS_SCRIPT: Final[str] = f'#!/bin/sh\nprintf "%s" "${TOKEN_VARIABLE}"\n'
 WORKTREE_LIST_PREFIX: Final[str] = "worktree "
 SETUP_ENVIRONMENT: Final[dict[str, str]] = {"GIT_TERMINAL_PROMPT": "0"}
+MERGE_TREE_CLEAN: Final[int] = 0
+MERGE_TREE_CONFLICTED: Final[int] = 1
 
 
 def clone_url(repo: RepoTarget, state_directory: Path) -> str:
@@ -225,6 +227,28 @@ def diff_text(workbench: Path, base_reference: str, environment: dict[str, str])
     return run_git(["diff", f"{base_reference}..HEAD"], cwd=workbench, environment=environment)
 
 
+def merge_conflicts(
+    workbench: Path, first: str, second: str, environment: dict[str, str]
+) -> list[str]:
+    completed = subprocess.run(
+        [GIT_BINARY, "merge-tree", "--write-tree", "--name-only", "--no-messages", first, second],
+        cwd=workbench,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=GIT_TIMEOUT_SECONDS,
+    )
+    if completed.returncode == MERGE_TREE_CLEAN:
+        return []
+    if completed.returncode != MERGE_TREE_CONFLICTED:
+        raise subprocess.CalledProcessError(
+            completed.returncode, completed.args, completed.stdout, completed.stderr
+        )
+    return sorted({line for line in completed.stdout.splitlines()[1:] if line.strip()})
+
+
 def discard_changes(workbench: Path, environment: dict[str, str]) -> None:
     run_git(["checkout", "--", "."], cwd=workbench, environment=environment)
     run_git(["clean", "-fd"], cwd=workbench, environment=environment)
@@ -250,6 +274,14 @@ def remove_worktree(workbench: Path, worktree: Path, environment: dict[str, str]
     run_git(
         ["worktree", "remove", "--force", str(worktree)], cwd=workbench, environment=environment
     )
+
+
+def discard_worktree(workbench: Path, worktree: Path, environment: dict[str, str]) -> None:
+    try:
+        remove_worktree(workbench, worktree, environment)
+    except subprocess.CalledProcessError:
+        shutil.rmtree(worktree, ignore_errors=True)
+        run_git(["worktree", "prune"], cwd=workbench, environment=environment)
 
 
 def registered_worktrees(workbench: Path, environment: dict[str, str]) -> list[Path]:

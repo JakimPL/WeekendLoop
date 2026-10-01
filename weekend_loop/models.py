@@ -159,11 +159,6 @@ class TaskStatus(StrEnum):
     SKIPPED = "skipped"
 
 
-class SoloReason(StrEnum):
-    SHARED_PATH = "shared_path"
-    NO_TOUCHED_PATHS = "no_touched_paths"
-
-
 class RunPhase(StrEnum):
     PREFLIGHT = "preflight"
     TRIAGE = "triage"
@@ -267,6 +262,7 @@ class EventType(StrEnum):
     TASK_FINISHED = "task_finished"
     TASK_FAILED = "task_failed"
     MEMORY_WAITED = "memory_waited"
+    STACK_LINKED = "stack_linked"
     BASELINE_FINISHED = "baseline_finished"
     BRANCH_PUSHED = "branch_pushed"
     PULL_REQUEST_OPENED = "pull_request_opened"
@@ -404,6 +400,7 @@ class BoardIndex(Record):
     viewer_login: str
     next_number: int
     labels: list[BoardLabel]
+    stacks: list[list[int]] = Field(default_factory=list)
 
 
 class SpecSignals(Record):
@@ -450,6 +447,7 @@ class GateResult(Record):
 class Overlap(Record):
     issue_number: int
     paths: list[str]
+    merges_cleanly: bool = False
 
 
 class Task(Record):
@@ -469,8 +467,8 @@ class Task(Record):
     worker_cost_usd: float = 0.0
     resumes: int = 0
     published_at: datetime | None = None
-    wave: int | None = None
-    solo_reason: SoloReason | None = None
+    stacked_on: int | None = None
+    base_branch: str | None = None
     overlaps: list[Overlap] = Field(default_factory=list)
 
 

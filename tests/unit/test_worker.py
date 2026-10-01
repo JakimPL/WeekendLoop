@@ -20,8 +20,9 @@ from weekend_loop.models import (
 from weekend_loop.policy import repo_target
 from weekend_loop.resources import PromptName, prompt_text
 from weekend_loop.worker import (
+    NO_OTHER_PATHS_TEXT,
+    NO_PARENT_TEXT,
     NO_SHARED_PATHS_TEXT,
-    NO_WAVE_PATHS_TEXT,
     RESUME_PROMPT,
     TaskGuidance,
     WorkerCall,
@@ -35,6 +36,10 @@ from weekend_loop.worker import (
 
 def pilot_of(policy: Policy) -> RepoTarget:
     return repo_target(policy, "demo")
+
+
+def alone_on_main(answers: list[str]) -> TaskGuidance:
+    return TaskGuidance(answers=answers, other_paths=[], parent=None, base_branch="main")
 
 
 def build_result(structured_output: dict[str, object] | None) -> ClaudeResult:
@@ -65,7 +70,7 @@ def test_the_task_states_the_branch_the_limit_and_the_untrusted_issue(
         pilot_of(workspace_policy),
         "weekend/3-empty",
         400,
-        TaskGuidance(answers=[], wave_paths=[]),
+        alone_on_main([]),
         [],
     )
     assert "# Task: issue #3 — Empty speed field" in task
@@ -86,13 +91,13 @@ def test_answers_from_the_reviewer_reach_the_task(workspace_policy: Policy) -> N
         pilot_of(workspace_policy),
         "weekend/3-empty",
         400,
-        TaskGuidance(answers=["Use knots, not metres per second."], wave_paths=[]),
+        alone_on_main(["Use knots, not metres per second."]),
         [],
     )
     assert "- Use knots, not metres per second." in task
 
 
-def test_the_task_names_what_the_rest_of_the_wave_touches_and_the_shared_files(
+def test_the_task_names_what_the_other_tasks_change_and_the_shared_files(
     workspace_policy: Policy,
 ) -> None:
     issue = build_issue(3, "Empty speed field", "body", [], [], [], None)
@@ -106,11 +111,16 @@ def test_the_task_names_what_the_rest_of_the_wave_touches_and_the_shared_files(
         repo,
         "weekend/3-empty",
         400,
-        TaskGuidance(answers=[], wave_paths=["src/other.py", "tests/test_other.py"]),
+        TaskGuidance(
+            answers=[],
+            other_paths=["#4: src/other.py, tests/test_other.py", "#5: docs/a.md"],
+            parent=None,
+            base_branch="main",
+        ),
         ["CHANGELOG.md", "docs/generated/**"],
     )
     assert (
-        "Other tasks worked in this wave touch: src/other.py, tests/test_other.py; stay off them."
+        "Other tasks of this run change: #4: src/other.py, tests/test_other.py; #5: docs/a.md."
         in in_company
     )
     assert "Shared files, appended to and never rewritten: CHANGELOG.md, docs/generated/**" in (
@@ -123,10 +133,11 @@ def test_the_task_names_what_the_rest_of_the_wave_touches_and_the_shared_files(
         repo,
         "weekend/3-empty",
         400,
-        TaskGuidance(answers=[], wave_paths=[]),
+        alone_on_main([]),
         [],
     )
-    assert f"touch: {NO_WAVE_PATHS_TEXT}; stay off them." in alone
+    assert f"Other tasks of this run change: {NO_OTHER_PATHS_TEXT}." in alone
+    assert f"Builds on: {NO_PARENT_TEXT}" in alone
     assert f"never rewritten: {NO_SHARED_PATHS_TEXT}" in alone
 
 
@@ -219,3 +230,27 @@ def test_the_abandoned_delivery_names_the_reason_and_claims_nothing() -> None:
     assert delivery.files_changed == []
     assert delivery.confidence is Confidence.LOW
     assert Blocker.ASSESSOR_FAILED.value not in delivery.summary
+
+
+def test_a_stacked_task_starts_from_its_parent_and_is_told_what_it_holds(
+    workspace_policy: Policy,
+) -> None:
+    issue = build_issue(11, "Who starts", "body", [], [], [], None)
+    assessment = build_assessment(Verdict.EXECUTE, Effort.S, Risk.BEHAVIOUR, [], [])
+    task = render_task(
+        prompt_text(PromptName.TASK_TEMPLATE, None),
+        issue,
+        assessment,
+        pilot_of(workspace_policy),
+        "weekend/11-who-starts",
+        400,
+        TaskGuidance(
+            answers=[],
+            other_paths=[],
+            parent="#5 Archived games, whose branch is your base: Games keep their players.",
+            base_branch="weekend/5-archived-games",
+        ),
+        [],
+    )
+    assert "Branch: weekend/11-who-starts (based on weekend/5-archived-games)" in task
+    assert "Builds on: #5 Archived games, whose branch is your base" in task

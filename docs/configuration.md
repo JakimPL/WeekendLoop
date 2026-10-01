@@ -142,26 +142,25 @@ and state.
 
 ## Working in parallel
 
-By default a run works its approved issues one at a time, in one checkout. `worker.parallel` lets
-it work several at once, each on its own branch in a git worktree of its own under
-`work/<repo>-worktrees/`:
+Every issue works on its own branch, in a git worktree of its own under `work/<repo>-worktrees/`.
+By default a run works one issue at a time; `worker.parallel` lets it work several at once:
 
 ```yaml
 worker:
-  parallel: 2              # how many issues run at once; 1 keeps the single checkout
+  parallel: 2              # how many issues may work at once
   max_stack_depth: 2       # how many issues may build on each other in one run; 0 turns it off
-  shared_paths:            # files many issues append to; an issue that touches one runs alone
+  shared_paths:            # files many issues append to; their additions merge by taking both sides
     - "CHANGELOG.md"
     - "docs/generated/**"
 ```
 
-Issues run at once only when the paths their assessments name are disjoint: two issues worked at
-once never change the same hand-written file. A path covers itself and everything under it, so an
-issue that names a directory waits for every issue that names a file inside it, and the other way
-round. `shared_paths` names files that many issues append to, such as a changelog, a generated
-catalog or a table in the docs; an issue that touches one of them runs alone, as does an issue
-whose assessment names no paths at all. Files like these are appended to, never rewritten.
-[docs/operating.md](operating.md#working-in-parallel) describes how a run in waves behaves, what to
+Each worker is told the paths the other tasks change, and after the run every pair of branches
+that changed the same hand-written file is checked with git: a pair git cannot merge on its own is
+marked "[merge care]". `shared_paths` names files that many issues append to, such as a changelog,
+a generated catalog or a table in the docs; they stay out of that check, since every issue appends
+to them and the reviewer takes both sides. An issue that builds on another one the run also works
+starts from that issue's branch, at most `max_stack_depth` issues deep.
+[docs/operating.md](operating.md#working-in-parallel) describes how parallel work behaves, what to
 do at merge time, and how to write issues that parallelise well.
 
 ## Memory

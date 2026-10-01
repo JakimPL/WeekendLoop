@@ -44,6 +44,8 @@ query($owner: String!, $name: String!, $endCursor: String) {
   }
 }
 """
+API_VERSION_HEADER: Final[str] = "X-GitHub-Api-Version"
+STACKS_API_VERSION: Final[str] = "2026-03-10"
 BLOCKERS_FILTER: Final[str] = (
     ".data.repository.issues.nodes[] | "
     '{number, blocked_by: [.blockedBy.nodes[] | select(.state == "OPEN") | .number]}'
@@ -340,7 +342,7 @@ class GitHubWriter:
         self.assert_remote_is_the_policy_repository(workbench, environment)
         run_git(["push", "origin", push_refspec(branch)], cwd=workbench, environment=environment)
 
-    def open_draft_pull_request(self, branch: str, title: str, body: str) -> str:
+    def open_draft_pull_request(self, branch: str, title: str, body: str, base: str) -> str:
         output = self.commands.run(
             [
                 "pr",
@@ -351,7 +353,7 @@ class GitHubWriter:
                 "--head",
                 branch,
                 "--base",
-                self.repo.base_branch,
+                base,
                 "--title",
                 title,
                 "--body-file",
@@ -360,6 +362,21 @@ class GitHubWriter:
             stdin=body,
         )
         return url_from_output(output, PULL_REQUEST_URL_PATTERN)
+
+    def link_stack(self, pull_request_numbers: list[int]) -> None:
+        self.commands.run(
+            [
+                "api",
+                "-X",
+                "POST",
+                f"repos/{self.repo.slug}/stacks",
+                "-H",
+                f"{API_VERSION_HEADER}: {STACKS_API_VERSION}",
+                "--input",
+                "-",
+            ],
+            stdin=json.dumps({"pull_requests": pull_request_numbers}),
+        )
 
     def comment_on_issue(self, issue_number: int, body: str) -> None:
         self.commands.run(

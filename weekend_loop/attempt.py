@@ -27,7 +27,6 @@ from weekend_loop.run_resources import RunResources
 from weekend_loop.runs import RunProgress, append_event
 from weekend_loop.supervision import RunSupervisor
 from weekend_loop.workbench import (
-    base_reference,
     branch_name,
     create_task_branch,
     reset_to_base,
@@ -73,6 +72,7 @@ class TaskBench(Record):
     git_settings: dict[str, str]
     environment: dict[str, str]
     kind: BenchKind
+    base: str
 
 
 def next_worker_step(outcome: ClaudeOutcome, stall_resumes: int, fresh_used: bool) -> WorkerStep:
@@ -104,7 +104,7 @@ def branch_of(task: Task) -> str:
 
 def place_on_branch(bench: TaskBench, branch: str) -> None:
     if bench.kind is BenchKind.WORKTREE:
-        reset_worktree(bench.workbench, branch, base_reference(bench.repo), bench.git_settings)
+        reset_worktree(bench.workbench, branch, bench.base, bench.git_settings)
         return
     reset_to_base(bench.repo, bench.workbench, bench.git_settings)
     create_task_branch(bench.workbench, branch, bench.git_settings)

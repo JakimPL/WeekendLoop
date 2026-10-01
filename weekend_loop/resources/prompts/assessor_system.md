@@ -31,9 +31,9 @@ Risk, from lowest to highest: docs (prose only), tests (test code only), refacto
 behaviour (observable change), interface (public API, configuration, CI, dependencies, security).
 touched_paths: every repository-relative path the plan will change: source, tests, docs, generated
 files and configuration alike. List paths you confirmed exist; mark new files with a trailing " (new)".
-A directory counts as everything under it. The run schedules parallel work from this list: tasks whose
-paths are disjoint run at the same time, so a path left out can put two tasks that change the same
-file into one wave. When in doubt, list the file.
+A directory counts as everything under it. The run shows each worker the paths the other tasks of
+the run change, so they keep off each other's files; a path left out hides it from the others. When in
+doubt, list the file.
 plan: at most ten lines. The first says in plain words what changes and for whom, as parts 1 and 2 of
 "Describing a task" in the writing guide below ask; the operator approves plans from that line. The
 rest are imperative steps, concrete enough that another engineer could execute them.

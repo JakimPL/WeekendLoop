@@ -160,7 +160,7 @@ and repository command, and every `claude` call, reads its input from `/dev/null
 A run stays inside the weekend window in `config.yaml`. By default that is Friday 18:00 to Sunday
 23:59 in the schedule's timezone (`schedule.window`). `weekend` starts only inside the window. Use
 `--ignore-window` to start it anyway, for example on a weekday. When the window closes, no new task
-or wave starts, and the tasks already running finish.
+starts, and the tasks already running finish.
 
 ### Limits
 
@@ -169,8 +169,8 @@ Four things limit a run:
 - **Subscription usage.** Preflight refuses to start if the seven-day window has no room for
   another task. `usage.seven_day_ceiling` keeps the run below the limit by the margin in
   `usage.seven_day_reserve`.
-- **The dollar budget.** A task starts only if the budget still covers a whole task. In a
-  parallel run, a wave starts only when the budget covers every task in it.
+- **The dollar budget.** A task starts only if the budget still covers a whole task, beside every
+  task already running.
 - **`max_tasks`.** The number of tasks the reviewer can handle on Monday.
 - **The weekend window.**
 
@@ -220,31 +220,33 @@ run, the command to run (`prepare` or `weekend`), the timezone and the repositor
 
 ## Working in parallel
 
-`worker.parallel` sets how many tasks a run works at once. Above 1, `execute` takes the approved
-tasks in their usual order and groups them into waves: a task joins the wave being formed when the
-paths its assessment names are disjoint from everything the wave already touches, and otherwise
-starts the next wave. A task that touches one of `worker.shared_paths`, or whose assessment names
-no paths, takes a wave of its own. The rule the waves keep is that two tasks in one wave never
-change the same hand-written file, and the assessor's `touched_paths` is what they keep it with.
+Every task works on its own branch in a git worktree of its own under
+`<workspace>/work/<repo>-worktrees/<branch>`, with the setup commands run inside it; the worker,
+the gate and the hidden acceptance test all run there. The worktree goes when the task ends, and
+the branch stays for `publish`.
 
-Each task in a wave works on its own branch in a git worktree of its own under
-`<workspace>/work/<repo>-worktrees/<branch>`, made from the base branch with the setup commands run
-inside it; the worker, the gate and the hidden acceptance test all run there. The worktrees go when
-the wave ends, and the branches stay for `publish`. A wave holds at most `worker.parallel` tasks
-and starts only when the dollar budget covers every task in it; what the budget leaves out waits
-for the next wave. `max_tasks` counts across waves, the allowance is probed once before each wave,
-and the weekend window is checked between waves. Every task records the wave it ran in, and the
-reason when a rule made it run alone; the digest lists the waves.
+`worker.parallel` sets how many tasks may work at once; the memory pool may allow fewer, and
+preflight says how many. The run starts the next approved task whenever a slot is free, so a slow
+task holds up nothing but its own slot. Before each start it checks the deadline, a stop or pause
+request, the dollar budget (which must cover the new task beside every task still running) and the
+allowance. `max_tasks` counts every task of the run.
 
-After a wave, the run compares what each branch actually changed. When two tasks of one wave
-changed the same hand-written file, both record it, the digest lists the pair under "Merge with
-care", and their pull requests carry "[merge care]" in the title and name each other in the body.
-They are still published; merge them one at a time and run the tests after each.
+Each worker is told which paths the other tasks of the run change, and keeps off them. Every branch
+starts from the base branch, except a branch that builds on another issue (see below), so running
+two tasks side by side or one after another leaves the same branches behind.
 
-At merge time, take every branch of a wave: their hand-written changes are disjoint by
-construction. For a shared file such as a generated catalog, a docs table or a list of routes,
-take both sides and regenerate what is generated. For a "[merge care]" pair, merge one, run the
-tests, then merge the other.
+After the last task, the run checks every pair of branches that changed the same hand-written file
+with `git merge-tree`:
+
+- When git merges the pair cleanly, the digest notes it under "Merge order", and the reviewer runs
+  the tests after merging the second.
+- When git cannot merge the pair on its own, both pull requests carry "[merge care]" in the title
+  and name each other in the body, and the digest lists the pair under "Merge with care". Merge
+  one, then resolve the other against it.
+
+Files under `worker.shared_paths`, such as a changelog, a generated catalog, a docs table or a list
+of routes, stay out of this check: every task appends to them, and at merge you take both sides
+and regenerate what is generated.
 
 ### Writing issues that parallelise well
 
@@ -252,11 +254,12 @@ tests, then merge the other.
   [The writing guide](../weekend_loop/resources/prompts/writing_guide.md) spells out the order,
   and the assessor and the worker write their plans and pull requests by the same guide.
 - Name the files the work will change, tests and docs included. The assessor turns them into
-  `touched_paths`, and the waves come from that list.
-- Keep the issues of one batch disjoint. Two issues that change the same file take turns, and a
-  batch of issues on one file runs one at a time.
+  `touched_paths`, and each worker keeps off the paths the other tasks name.
+- Keep the issues of one batch apart. Two issues that change the same lines leave two branches
+  git cannot merge on its own; when one needs the other, link them instead.
 - Name the registries the change appends to, such as a changelog, a generated index or a table in
-  the docs, and list them under `worker.shared_paths`, so an issue that touches one runs alone.
+  the docs, and list them under `worker.shared_paths`, so their additions merge by taking both
+  sides.
 - State acceptance as checkbox lines. The assessor reads them as the goal, and the reviewer checks
   the branch against them.
 - Link the issues that build on each other on GitHub, with "Mark as blocked by" in the issue's
@@ -275,9 +278,22 @@ the code its parent is about to fix. The run learns these links in two ways:
   first sentence, and names the ones an issue builds on under `depends_on`. The triage plan lists
   them under "Builds on", marked "found by the assessor"; link them on GitHub to keep them.
 
-An issue whose dependencies have all closed is worked as usual. An issue that builds on an issue
-still open waits, and the event log says which one it waits for. A dependency named either way is
-no blocker in the assessment: the run decides from the links.
+An issue whose dependencies have all closed is worked as usual. An issue that builds on one issue
+the run also works is stacked on it:
+
+- It starts after its parent passes the gate, on a branch made from the parent's branch, so it
+  sees the parent's fix. Its size and forbidden-path limits apply to its own change only.
+- If the parent ends any other way, the child waits for a later run, and the event log says why.
+- Its draft pull request targets the parent's branch and says to merge the parent first. The run
+  then asks GitHub to show the pair as a stack, so that merging the lower one moves the upper one
+  onto the base branch. Where GitHub cannot, the pull request explains how to merge them by hand.
+- The digest lists every stack under "Merge order".
+
+`worker.max_stack_depth` (2 by default) caps how many issues may build on each other in one run;
+0 turns stacking off. A parent carries one child per run, and an issue that builds on two open
+issues, on one the run leaves alone, or on open work outside the run waits, with the reason in the
+event log. A dependency named either way is no blocker in the assessment: the run decides from the
+links.
 
 ## Running under systemd
 

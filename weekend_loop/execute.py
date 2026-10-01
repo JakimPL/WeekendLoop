@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -44,6 +44,7 @@ from weekend_loop.models import (
     Issue,
     LabelPolicy,
     LedgerEntry,
+    Overlap,
     Policy,
     RepoTarget,
     RunPhase,
@@ -54,13 +55,20 @@ from weekend_loop.models import (
     Verdict,
     WorkerOutcome,
 )
+from weekend_loop.overlaps import other_paths, overlaps_found, pairs_sharing_files
 from weekend_loop.publish import publishable
 from weekend_loop.records import append_record, write_record
 from weekend_loop.report import EFFORT_ORDER
 from weekend_loop.run_resources import RunResources, open_run_resources
 from weekend_loop.runs import RunDirectory, RunProgress, append_event, ledger_path
+from weekend_loop.scheduler import (
+    WorkQueue,
+    next_start,
+    queue_order,
+    same_stack_pairs,
+    stack_containing,
+)
 from weekend_loop.supervision import STOP_DETAIL, Hold, RunSupervisor
-from weekend_loop.waves import Wave, overlaps_within, sibling_paths, waves_of
 from weekend_loop.workbench import (
     add_worktree,
     base_reference,
@@ -72,12 +80,13 @@ from weekend_loop.workbench import (
     current_commit,
     diff_text,
     discard_changes,
+    discard_worktree,
     fetch_base,
     git_environment,
+    merge_conflicts,
     prepare_checkout,
     prune_worktrees,
     registered_worktrees,
-    remove_worktree,
     run_setup_commands,
     setup_environment,
     write_askpass_script,
@@ -130,8 +139,13 @@ BASELINE_FAILED_TEMPLATE: Final[str] = (
     "the base branch fails its own gate: {command} exited {exit_code}{cap}"
 )
 MEMORY_CAP_SUFFIX: Final[str] = " at its memory cap"
-WAVE_DETAIL_TEMPLATE: Final[str] = "wave {number}: {issues}"
-OVERLAP_DETAIL_TEMPLATE: Final[str] = "#{first} and #{second} both changed {paths}"
+OVERLAP_DETAIL_TEMPLATE: Final[str] = (
+    "#{first} and #{second} both changed {paths}, and git cannot merge them on its own"
+)
+CLEAN_OVERLAP_TEMPLATE: Final[str] = (
+    "#{first} and #{second} both changed {paths}, and git merges them cleanly"
+)
+PARENT_LINE_TEMPLATE: Final[str] = "#{number} {title}, whose branch is your base: {summary}"
 
 
 class ResumeAction(StrEnum):
@@ -318,7 +332,7 @@ def judge_branch(
     workbench = bench.workbench
     git_settings = bench.git_settings
     commit_changes(workbench, policy.identity, commit_subject(outcome, task.title), git_settings)
-    base = base_reference(bench.repo)
+    base = bench.base
     files = parse_numstat(changed_files_numstat(workbench, base, git_settings))
     diff = diff_text(workbench, base, git_settings)
     gate = evaluate_gate(
@@ -423,7 +437,7 @@ def current_issues(reader: BoardReader, limit: int) -> dict[int, Issue]:
 
 def approved_tasks(
     policy: Policy, state: RunState, issues: dict[int, Issue], run_directory: RunDirectory
-) -> list[Task]:
+) -> WorkQueue:
     inbox = read_inbox(run_directory.inbox)
     candidates = [task for task in state.tasks if task.assessment is not None]
     selected: list[Task] = []
@@ -440,13 +454,16 @@ def approved_tasks(
         policy.worker.max_stack_depth,
     )
     approved: list[Task] = []
+    parents: dict[int, int] = {}
     for task in selected:
         verdict = verdicts[task.issue_number]
-        if verdict.state is DependencyState.SATISFIED:
-            approved.append(task)
-        else:
+        if verdict.state is DependencyState.WAITING:
             append_event(run_directory, EventType.TASK_SKIPPED, verdict.reason, task.issue_number)
-    return approved
+            continue
+        approved.append(task)
+        if verdict.state is DependencyState.STACKED and verdict.parent is not None:
+            parents[task.issue_number] = verdict.parent
+    return WorkQueue(tasks=approved, parents=parents)
 
 
 def execute_run(
@@ -481,18 +498,20 @@ def execute_run(
     )
     if halt is not None:
         return close_execution(progress, halt, [], 0)
-    approved = approved_tasks(policy, progress.state, issues, run_directory)
+    queue = approved_tasks(policy, progress.state, issues, run_directory)
     workbench, git_settings = prepare_execution(policy, repo, repo_key)
-    bench = task_bench(policy, repo, workbench, git_settings, BenchKind.CHECKOUT)
-    halt = baseline_halt(policy, bench, resources, supervisor, progress) if approved else None
+    bench = task_bench(
+        policy, repo, workbench, git_settings, BenchKind.CHECKOUT, base_reference(repo)
+    )
+    halt = baseline_halt(policy, bench, resources, supervisor, progress) if queue.tasks else None
     if halt is not None:
         append_event(run_directory, EventType.RUN_ABORTED, halt.detail, None)
-        return close_execution(progress, halt, approved, 0)
+        return close_execution(progress, halt, queue.tasks, 0)
     return work_through(
         policy,
         bench,
         repo_key,
-        approved,
+        queue,
         issues,
         progress,
         acceptance_tests,
@@ -561,7 +580,12 @@ def baseline_commands(
 
 
 def task_bench(
-    policy: Policy, repo: RepoTarget, workbench: Path, git_settings: dict[str, str], kind: BenchKind
+    policy: Policy,
+    repo: RepoTarget,
+    workbench: Path,
+    git_settings: dict[str, str],
+    kind: BenchKind,
+    base: str,
 ) -> TaskBench:
     return TaskBench(
         repo=repo,
@@ -574,14 +598,19 @@ def task_bench(
             {**WORKER_ENVIRONMENT, **fan_out_environment(policy.resources)},
         ),
         kind=kind,
+        base=base,
     )
 
 
-def worktree_for(policy: Policy, bench: TaskBench, repo_key: str, issue: Issue) -> TaskBench:
+def worktree_for(
+    policy: Policy, bench: TaskBench, repo_key: str, issue: Issue, base: str
+) -> TaskBench:
     branch = branch_name(policy.worker.branch_prefix, issue.number, issue.title)
     worktree = policy.workspace.worktree_path(repo_key, branch)
-    add_worktree(bench.workbench, worktree, branch, base_reference(bench.repo), bench.git_settings)
-    return bench.model_copy(update={"workbench": worktree, "kind": BenchKind.WORKTREE})
+    add_worktree(bench.workbench, worktree, branch, base, bench.git_settings)
+    return bench.model_copy(
+        update={"workbench": worktree, "kind": BenchKind.WORKTREE, "base": base}
+    )
 
 
 def worktree_in_use(workbench: Path, worktree: Path, git_settings: dict[str, str]) -> bool:
@@ -621,17 +650,20 @@ def interrupted_bench(
 ) -> tuple[TaskBench, bool]:
     git_settings = git_environment(repository_token(repo), write_askpass_script(policy.state_dir))
     workbench = policy.workspace.workbench_path(repo_key)
+    base = task.base_branch if task.base_branch is not None else base_reference(repo)
     if task.branch is not None:
         worktree = policy.workspace.worktree_path(repo_key, task.branch)
         if (
             worktree_in_use(workbench, worktree, git_settings)
             and current_branch(worktree, git_settings) == task.branch
         ):
-            return task_bench(policy, repo, worktree, git_settings, BenchKind.WORKTREE), True
+            bench = task_bench(policy, repo, worktree, git_settings, BenchKind.WORKTREE, base)
+            return bench, True
     on_task_branch = (workbench / ".git").is_dir() and current_branch(
         workbench, git_settings
     ) == task.branch
-    return task_bench(policy, repo, workbench, git_settings, BenchKind.CHECKOUT), on_task_branch
+    bench = task_bench(policy, repo, workbench, git_settings, BenchKind.CHECKOUT, base)
+    return bench, on_task_branch
 
 
 def finish_interrupted_tasks(
@@ -675,7 +707,7 @@ def finish_interrupted_tasks(
 def release_bench(policy: Policy, repo_key: str, bench: TaskBench) -> None:
     if bench.kind is BenchKind.WORKTREE:
         workbench = policy.workspace.workbench_path(repo_key)
-        remove_worktree(workbench, bench.workbench, bench.git_settings)
+        discard_worktree(workbench, bench.workbench, bench.git_settings)
 
 
 def finish_interrupted_task(
@@ -733,7 +765,9 @@ def finish_interrupted_task(
             read_briefing(policy.state_dir, progress.state.repo_key),
             task,
         ),
-        wave_paths=[],
+        other_paths=[],
+        parent=parent_line(progress, task.stacked_on),
+        base_branch=task.base_branch or repo.base_branch,
     )
     if action is ResumeAction.START_OVER:
         updated, outcome, halt = run_task(
@@ -990,64 +1024,8 @@ def allowance_halt(
     return Halt(reason=verdict.stop_reason or StopReason.ALLOWANCE, detail=verdict.detail)
 
 
-def work_in_turn(
-    policy: Policy,
-    bench: TaskBench,
-    queue: list[Task],
-    issues: dict[int, Issue],
-    progress: RunProgress,
-    acceptance_tests: dict[int, Path],
-    supervisor: RunSupervisor,
-    deadline: datetime,
-    resources: RunResources,
-) -> Halt | None:
-    observed_costs: list[float] = []
-    for task in queue:
-        halt = before_task(policy, progress, supervisor, deadline) or allowance_halt(
-            policy, bench, progress, supervisor, deadline, observed_costs
-        )
-        if halt is not None:
-            return halt
-        inbox = read_inbox(progress.run_directory.inbox)
-        briefing = read_briefing(policy.state_dir, progress.state.repo_key)
-        _, halt = guarded_work_task(
-            policy,
-            bench,
-            task,
-            issues[task.issue_number],
-            TaskGuidance(answers=guidance_for(inbox, briefing, task), wave_paths=[]),
-            acceptance_tests,
-            supervisor,
-            progress,
-            deadline,
-            observed_costs,
-            resources,
-        )
-        if halt is not None:
-            append_event(progress.run_directory, EventType.LIMIT_REACHED, halt.detail, None)
-            return halt
-    return None
-
-
 def affordable_task_count(policy: Policy, spent_usd: float) -> int:
     return int((policy.budget.envelope_usd - spent_usd) // policy.budget.per_task_usd)
-
-
-def next_wave(policy: Policy, spent_usd: float, queue: list[Task], slots: int) -> Wave:
-    wave = waves_of(queue, policy.worker.shared_paths)[0]
-    size = min(len(wave.tasks), slots, affordable_task_count(policy, spent_usd))
-    return wave.model_copy(update={"tasks": wave.tasks[:size]})
-
-
-def open_worktrees(
-    policy: Policy,
-    bench: TaskBench,
-    repo_key: str,
-    tasks: list[Task],
-    issues: dict[int, Issue],
-) -> list[TaskBench]:
-    fetch_base(bench.repo, bench.workbench, bench.git_settings)
-    return [worktree_for(policy, bench, repo_key, issues[task.issue_number]) for task in tasks]
 
 
 def close_worktrees(policy: Policy, bench: TaskBench, repo_key: str) -> None:
@@ -1058,117 +1036,143 @@ def changed_paths_of(task: Task) -> list[str]:
     return task.gate.changed_paths if task.gate is not None else []
 
 
-def note_overlaps(policy: Policy, progress: RunProgress, tasks: list[Task]) -> None:
-    finished = [progress.task(task.issue_number) for task in tasks]
-    changed = {task.issue_number: changed_paths_of(task) for task in finished if publishable(task)}
-    found = overlaps_within(changed, policy.worker.shared_paths)
-    for task in finished:
-        if task.issue_number in found:
-            progress.put_task(task.model_copy(update={"overlaps": found[task.issue_number]}))
+def stack_parents(tasks: list[Task]) -> dict[int, int]:
+    return {task.issue_number: task.stacked_on for task in tasks if task.stacked_on is not None}
+
+
+def overlap_detail(first: int, overlap: Overlap) -> str:
+    template = CLEAN_OVERLAP_TEMPLATE if overlap.merges_cleanly else OVERLAP_DETAIL_TEMPLATE
+    return template.format(first=first, second=overlap.issue_number, paths=", ".join(overlap.paths))
+
+
+def note_overlaps(policy: Policy, progress: RunProgress, bench: TaskBench) -> None:
+    finished = [task for task in progress.state.tasks if publishable(task)]
+    branches = {task.issue_number: task.branch for task in finished if task.branch is not None}
+    sharing = pairs_sharing_files(
+        {number: changed_paths_of(progress.task(number)) for number in branches},
+        policy.worker.shared_paths,
+        same_stack_pairs(stack_parents(progress.state.tasks)),
+    )
+    conflicts = {
+        (first, second): merge_conflicts(
+            bench.workbench, branches[first], branches[second], bench.git_settings
+        )
+        for first, second in sharing
+    }
+    found = overlaps_found(sharing, conflicts)
+    for number, overlaps in found.items():
+        progress.put_task(progress.task(number).model_copy(update={"overlaps": overlaps}))
     if found:
         progress.save()
     for number, overlaps in found.items():
         for overlap in overlaps:
             if number < overlap.issue_number:
-                detail = OVERLAP_DETAIL_TEMPLATE.format(
-                    first=number, second=overlap.issue_number, paths=", ".join(overlap.paths)
-                )
+                detail = overlap_detail(number, overlap)
                 append_event(progress.run_directory, EventType.OVERLAP_FOUND, detail, number)
 
 
-def wave_detail(number: int, tasks: list[Task]) -> str:
-    issues = ", ".join(f"#{task.issue_number}" for task in tasks)
-    return WAVE_DETAIL_TEMPLATE.format(number=number, issues=issues)
+def parent_line(progress: RunProgress, parent: int | None) -> str | None:
+    if parent is None:
+        return None
+    task = progress.task(parent)
+    summary = task.delivery.summary.strip() if task.delivery is not None else ""
+    return PARENT_LINE_TEMPLATE.format(number=parent, title=task.title, summary=summary)
 
 
-def run_wave(
-    policy: Policy,
-    bench: TaskBench,
-    repo_key: str,
-    wave: Wave,
-    number: int,
-    issues: dict[int, Issue],
-    progress: RunProgress,
-    acceptance_tests: dict[int, Path],
-    supervisor: RunSupervisor,
-    deadline: datetime,
-    observed_costs: list[float],
-    resources: RunResources,
-) -> Halt | None:
-    tasks = [
-        task.model_copy(update={"wave": number, "solo_reason": wave.solo_reason})
-        for task in wave.tasks
-    ]
-    for task in tasks:
-        progress.put_task(task)
-    progress.save()
-    append_event(progress.run_directory, EventType.WAVE_STARTED, wave_detail(number, tasks), None)
-    try:
-        benches = open_worktrees(policy, bench, repo_key, tasks, issues)
-        halts = work_wave_tasks(
-            policy,
-            benches,
-            tasks,
-            issues,
-            progress,
-            acceptance_tests,
-            supervisor,
-            deadline,
-            observed_costs,
-            resources,
-        )
-        note_overlaps(policy, progress, tasks)
-    finally:
-        close_worktrees(policy, bench, repo_key)
-    if halts:
-        append_event(progress.run_directory, EventType.LIMIT_REACHED, halts[0].detail, None)
-        return halts[0]
-    return None
-
-
-def work_wave_tasks(
-    policy: Policy,
-    benches: list[TaskBench],
-    tasks: list[Task],
-    issues: dict[int, Issue],
-    progress: RunProgress,
-    acceptance_tests: dict[int, Path],
-    supervisor: RunSupervisor,
-    deadline: datetime,
-    observed_costs: list[float],
-    resources: RunResources,
-) -> list[Halt]:
+def task_guidance(
+    policy: Policy, progress: RunProgress, queue: WorkQueue, task: Task, base_branch: str
+) -> TaskGuidance:
     inbox = read_inbox(progress.run_directory.inbox)
     briefing = read_briefing(policy.state_dir, progress.state.repo_key)
-    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-        futures = [
-            pool.submit(
-                guarded_work_task,
-                policy,
-                worktree_bench,
-                task,
-                issues[task.issue_number],
-                TaskGuidance(
-                    answers=guidance_for(inbox, briefing, task),
-                    wave_paths=sibling_paths(tasks, task),
-                ),
-                acceptance_tests,
-                supervisor,
-                progress,
-                deadline,
-                observed_costs,
-                resources,
-            )
-            for task, worktree_bench in zip(tasks, benches, strict=True)
-        ]
-        return [halt for _, halt in (future.result() for future in futures) if halt is not None]
+    relatives = set(stack_containing(task.issue_number, queue.parents))
+    return TaskGuidance(
+        answers=guidance_for(inbox, briefing, task),
+        other_paths=other_paths(queue.tasks, task, relatives),
+        parent=parent_line(progress, queue.parents.get(task.issue_number)),
+        base_branch=base_branch,
+    )
 
 
-def work_in_waves(
+def place_task(
     policy: Policy,
     bench: TaskBench,
     repo_key: str,
-    queue: list[Task],
+    task: Task,
+    issues: dict[int, Issue],
+    queue: WorkQueue,
+    progress: RunProgress,
+) -> tuple[Task, TaskBench]:
+    parent = queue.parents.get(task.issue_number)
+    parent_branch = progress.task(parent).branch if parent is not None else None
+    if parent is not None and parent_branch is None:
+        raise ValueError(f"issue #{task.issue_number} builds on #{parent}, which has no branch")
+    placed = task.model_copy(update={"stacked_on": parent, "base_branch": parent_branch})
+    progress.put_task(placed)
+    progress.save()
+    base = parent_branch if parent_branch is not None else base_reference(bench.repo)
+    return placed, worktree_for(policy, bench, repo_key, issues[task.issue_number], base)
+
+
+def statuses_of(progress: RunProgress) -> dict[int, TaskStatus]:
+    return {task.issue_number: task.status for task in progress.state.tasks}
+
+
+def drop_waiting(progress: RunProgress, waiting: list[Task], dropped: dict[int, str]) -> list[Task]:
+    for number, reason in dropped.items():
+        append_event(progress.run_directory, EventType.TASK_SKIPPED, reason, number)
+    return [task for task in waiting if task.issue_number not in dropped]
+
+
+def may_start(policy: Policy, progress: RunProgress, running: int, slots: int) -> bool:
+    if running >= slots:
+        return False
+    return running == 0 or affordable_task_count(policy, progress.state.spent_usd) > running
+
+
+def start_in_pool(
+    pool: ThreadPoolExecutor,
+    policy: Policy,
+    bench: TaskBench,
+    repo_key: str,
+    task: Task,
+    issues: dict[int, Issue],
+    queue: WorkQueue,
+    progress: RunProgress,
+    acceptance_tests: dict[int, Path],
+    supervisor: RunSupervisor,
+    deadline: datetime,
+    observed_costs: list[float],
+    resources: RunResources,
+) -> tuple[Future[tuple[Task, Halt | None]], TaskBench] | None:
+    try:
+        placed, task_bench = place_task(policy, bench, repo_key, task, issues, queue, progress)
+    except TASK_FAILURES as error:
+        failed_task_halt(policy, progress, supervisor, task.issue_number, error)
+        return None
+    future = pool.submit(
+        guarded_work_task,
+        policy,
+        task_bench,
+        placed,
+        issues[placed.issue_number],
+        task_guidance(
+            policy, progress, queue, placed, placed.base_branch or bench.repo.base_branch
+        ),
+        acceptance_tests,
+        supervisor,
+        progress,
+        deadline,
+        observed_costs,
+        resources,
+    )
+    return future, task_bench
+
+
+def work_in_pool(
+    policy: Policy,
+    bench: TaskBench,
+    repo_key: str,
+    queue: WorkQueue,
     issues: dict[int, Issue],
     progress: RunProgress,
     acceptance_tests: dict[int, Path],
@@ -1176,42 +1180,73 @@ def work_in_waves(
     deadline: datetime,
     resources: RunResources,
 ) -> Halt | None:
+    slots = tasks_at_once(resources.admission.limits, policy.worker.parallel)
+    waiting = queue_order(queue.tasks, queue.parents)
+    running: dict[Future[tuple[Task, Halt | None]], tuple[int, TaskBench]] = {}
     observed_costs: list[float] = []
-    number = 0
-    while queue:
-        halt = before_task(policy, progress, supervisor, deadline) or allowance_halt(
-            policy, bench, progress, supervisor, deadline, observed_costs
-        )
-        if halt is not None:
-            return halt
-        number += 1
-        slots = tasks_at_once(resources.admission.limits, policy.worker.parallel)
-        wave = next_wave(policy, progress.state.spent_usd, queue, slots)
-        queue = queue[len(wave.tasks) :]
-        halt = run_wave(
-            policy,
-            bench,
-            repo_key,
-            wave,
-            number,
-            issues,
-            progress,
-            acceptance_tests,
-            supervisor,
-            deadline,
-            observed_costs,
-            resources,
-        )
-        if halt is not None:
-            return halt
-    return None
+    halt: Halt | None = None
+    fetch_base(bench.repo, bench.workbench, bench.git_settings)
+    try:
+        with ThreadPoolExecutor(max_workers=slots) as pool:
+            while waiting or running:
+                if halt is None and waiting and may_start(policy, progress, len(running), slots):
+                    numbers = {task.issue_number for task in waiting}
+                    numbers.update(number for number, _ in running.values())
+                    decision = next_start(waiting, statuses_of(progress), queue.parents, numbers)
+                    waiting = drop_waiting(progress, waiting, decision.dropped)
+                    if decision.task is not None:
+                        chosen = decision.task
+                        halt = before_task(policy, progress, supervisor, deadline) or (
+                            allowance_halt(
+                                policy, bench, progress, supervisor, deadline, observed_costs
+                            )
+                        )
+                        if halt is not None:
+                            continue
+                        waiting = [task for task in waiting if task is not chosen]
+                        started = start_in_pool(
+                            pool,
+                            policy,
+                            bench,
+                            repo_key,
+                            chosen,
+                            issues,
+                            queue,
+                            progress,
+                            acceptance_tests,
+                            supervisor,
+                            deadline,
+                            observed_costs,
+                            resources,
+                        )
+                        if started is not None:
+                            running[started[0]] = (chosen.issue_number, started[1])
+                        continue
+                    if decision.dropped:
+                        continue
+                if not running:
+                    break
+                done, _ = wait(list(running), return_when=FIRST_COMPLETED)
+                for future in done:
+                    _, task_bench = running.pop(future)
+                    _, task_halt = future.result()
+                    release_bench(policy, repo_key, task_bench)
+                    if task_halt is not None and halt is None:
+                        halt = task_halt
+                        append_event(
+                            progress.run_directory, EventType.LIMIT_REACHED, task_halt.detail, None
+                        )
+    finally:
+        close_worktrees(policy, bench, repo_key)
+    note_overlaps(policy, progress, bench)
+    return halt
 
 
 def work_through(
     policy: Policy,
     bench: TaskBench,
     repo_key: str,
-    approved: list[Task],
+    queue: WorkQueue,
     issues: dict[int, Issue],
     progress: RunProgress,
     acceptance_tests: dict[int, Path],
@@ -1220,33 +1255,20 @@ def work_through(
     resources: RunResources,
 ) -> RunState:
     capacity = max(policy.budget.max_tasks - worked_count(progress.state), 0)
-    queue = approved[:capacity]
-    if policy.worker.parallel > 1:
-        halt = work_in_waves(
-            policy,
-            bench,
-            repo_key,
-            queue,
-            issues,
-            progress,
-            acceptance_tests,
-            supervisor,
-            deadline,
-            resources,
-        )
-    else:
-        halt = work_in_turn(
-            policy,
-            bench,
-            queue,
-            issues,
-            progress,
-            acceptance_tests,
-            supervisor,
-            deadline,
-            resources,
-        )
-    return close_execution(progress, halt, approved, capacity)
+    kept = queue_order(queue.tasks, queue.parents)[:capacity]
+    halt = work_in_pool(
+        policy,
+        bench,
+        repo_key,
+        queue.model_copy(update={"tasks": kept}),
+        issues,
+        progress,
+        acceptance_tests,
+        supervisor,
+        deadline,
+        resources,
+    )
+    return close_execution(progress, halt, queue.tasks, capacity)
 
 
 def close_execution(

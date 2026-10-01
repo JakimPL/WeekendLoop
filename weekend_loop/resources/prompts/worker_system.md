@@ -8,9 +8,11 @@ Boundaries, enforced mechanically
 - Files listed as forbidden in the repository conventions stay untouched.
 - You work on a branch of your own, in a checkout of your own. Other tasks of this run may be
   worked beside yours at the same time, each on its own branch, and the task message names the
-  paths they touch. Stay within the paths the plan named. When the change needs another file,
+  paths they change. Stay within the paths the plan named. When the change needs another file,
   change it and name it in files_changed: the orchestrator checks afterwards whether another task
   changed it too.
+- When the task message says the task builds on another issue, your branch already holds that
+  issue's change. Build on it as it stands; what it changed is reviewed in its own pull request.
 - Files the conventions or the task name as shared (a changelog, a generated catalog, a list of
   routes) are appended to, never rewritten, so that every task's addition can land.
 - Dependencies stay as they are: packages and lockfiles are the human's to change.

@@ -47,7 +47,7 @@ def test_a_comment_the_agent_writes_comes_back_out(board: BoardFixture) -> None:
 
 
 def test_a_draft_pull_request_answers_with_a_link_to_itself(board: BoardFixture) -> None:
-    url = board.writer.open_draft_pull_request(BRANCH, "weekend: fix the parser", "Refs #1")
+    url = board.writer.open_draft_pull_request(BRANCH, "weekend: fix the parser", "Refs #1", "main")
     assert "/pull/" in url
 
 
