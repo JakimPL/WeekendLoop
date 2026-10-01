@@ -78,6 +78,7 @@ def spec_signals(issue: Issue, repository_root: Path) -> SpecSignals:
         referenced_paths=paths,
         resolved_paths=resolve_referenced_paths(paths, repository_root),
         has_acceptance_criteria=has_acceptance_criteria(issue.body),
+        blocked_by=issue.blocked_by,
     )
 
 

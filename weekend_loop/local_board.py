@@ -42,7 +42,7 @@ def as_pull_request(pull_request: BoardPullRequest, slug: str) -> PullRequest:
     )
 
 
-def as_issue(issue: BoardIssue, slug: str, linked: list[int]) -> Issue:
+def as_issue(issue: BoardIssue, slug: str, linked: list[int], open_numbers: set[int]) -> Issue:
     return Issue(
         number=issue.number,
         title=issue.title,
@@ -56,6 +56,7 @@ def as_issue(issue: BoardIssue, slug: str, linked: list[int]) -> Issue:
         url=issue_url(slug, issue.number),
         open_linked_pull_requests=linked,
         last_foreign_activity_at=None,
+        blocked_by=[number for number in issue.blocked_by if number in open_numbers],
     )
 
 
@@ -81,9 +82,11 @@ class LocalBoardReader:
     def open_issues(self, limit: int) -> list[Issue]:
         board = self.require_board()
         linked = pull_requests_by_issue(self.open_pull_requests(limit))
+        open_issues = board.open_issues()
+        open_numbers = {issue.number for issue in open_issues}
         return [
-            as_issue(issue, self.slug, linked.get(issue.number, []))
-            for issue in board.open_issues()[:limit]
+            as_issue(issue, self.slug, linked.get(issue.number, []), open_numbers)
+            for issue in open_issues[:limit]
         ]
 
     def issue_comments(self, issue_number: int) -> list[IssueComment]:

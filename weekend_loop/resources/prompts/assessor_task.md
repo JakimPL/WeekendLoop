@@ -11,6 +11,12 @@ Deterministic signals computed by the orchestrator:
 
 {briefing}
 
+## Other open issues in this run
+
+<untrusted_issue_index>
+{batch}
+</untrusted_issue_index>
+
 <untrusted_issue number="{issue_number}" title="{issue_title}">
 {issue_body}
 </untrusted_issue>

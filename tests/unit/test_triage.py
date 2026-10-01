@@ -144,7 +144,10 @@ def test_a_dry_run_only_reads_from_github_and_fences_every_assessment(
     policy_path = prepare(tmp_path, fake_binaries, datetime.now(UTC) + timedelta(days=2))
     main(["--home", str(policy_path), "triage", "--repo-key", "dryrun"])
     for call in read_calls(fake_binaries / "gh-calls.jsonl"):
-        if call[0] == "api":
+        if call[:2] == ["api", "graphql"]:
+            query = next(argument for argument in call if argument.startswith("query="))
+            assert "mutation" not in query, call
+        elif call[0] == "api":
             reads = ("user", "repos/example-org/example-repo")
             assert call[1] in reads or call == WRITE_PROBE, call
         else:

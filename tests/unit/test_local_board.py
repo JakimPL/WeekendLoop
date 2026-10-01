@@ -184,3 +184,12 @@ def test_a_board_under_a_namespace_of_your_own_takes_its_labels(tmp_path: Path) 
     assert "bot/review" in open_board(policy.state_dir, repo.slug).read_issue(FIRST_ISSUE).labels
     with pytest.raises(ValueError, match="bot/"):
         writer.add_labels(FIRST_ISSUE, ["weekend:review"])
+
+
+def test_a_board_issue_is_blocked_only_by_issues_still_open(tmp_path: Path) -> None:
+    policy = policy_at(seeded(tmp_path))
+    board = open_board(policy.state_dir, repo_target(policy, "demo").slug)
+    second = board.read_issue(2)
+    board.write_issue(second.model_copy(update={"blocked_by": [1, 99]}))
+    issues = reader_for(repo_target(policy, "demo"), policy.state_dir).open_issues(100)
+    assert {issue.number: issue.blocked_by for issue in issues}[2] == [1]

@@ -94,6 +94,18 @@ def render_filtered_table(tasks: list[Task]) -> str:
     return "\n".join([header, separator, *rows])
 
 
+def dependency_line(task: Task) -> str:
+    linked = task.spec_signals.blocked_by if task.spec_signals is not None else []
+    found = task.assessment.depends_on if task.assessment is not None else []
+    named = [f"#{number} (linked on GitHub)" for number in linked]
+    named.extend(
+        f"#{number} (found by the assessor; link it on GitHub to keep it)"
+        for number in found
+        if number not in linked
+    )
+    return f"\n\nBuilds on: {', '.join(named)}" if named else ""
+
+
 def render_plans(tasks: list[Task]) -> str:
     sections: list[str] = []
     for task in tasks:
@@ -103,7 +115,7 @@ def render_plans(tasks: list[Task]) -> str:
         paths = ", ".join(assessment.touched_paths) or "none named"
         sections.append(
             f"### #{task.issue_number} — {task.title} ({assessment.verdict.value})\n\n"
-            f"{assessment.plan.strip()}\n\nTouched paths: {paths}"
+            f"{assessment.plan.strip()}\n\nTouched paths: {paths}{dependency_line(task)}"
         )
     return "\n\n".join(sections) if sections else "Nothing reached execute or propose."
 

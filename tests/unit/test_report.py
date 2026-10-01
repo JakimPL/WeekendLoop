@@ -18,6 +18,7 @@ from weekend_loop.models import (
     Risk,
     RunState,
     SoloReason,
+    SpecSignals,
     TaskStatus,
     Verdict,
 )
@@ -185,3 +186,30 @@ def test_the_digest_names_the_memory_each_gate_took_and_what_hit_its_cap() -> No
     assert "- the base branch: gate peak 7.2 GB" in section
     assert "- #12: gate peak 9.9 GB; `pytest -q` stopped at its memory cap" in section
     assert "## Memory" not in render_digest(state, SLUG)
+
+
+def test_the_plan_says_what_each_issue_builds_on_and_who_said_so() -> None:
+    state = build_state()
+    linked = state.tasks[2].model_copy(
+        update={
+            "spec_signals": SpecSignals(
+                body_length=10,
+                sections_present=[],
+                has_template=False,
+                referenced_paths=[],
+                resolved_paths=[],
+                has_acceptance_criteria=False,
+                blocked_by=[5],
+            ),
+            "assessment": state.tasks[2].assessment.model_copy(update={"depends_on": [5, 9]})
+            if state.tasks[2].assessment is not None
+            else None,
+        }
+    )
+    plan = render_triage_plan(
+        state.model_copy(update={"tasks": [*state.tasks[:2], linked, state.tasks[3]]}), SLUG
+    )
+    assert (
+        "Builds on: #5 (linked on GitHub), "
+        "#9 (found by the assessor; link it on GitHub to keep it)" in plan
+    )

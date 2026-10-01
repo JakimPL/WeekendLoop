@@ -72,6 +72,13 @@
     "confidence": {
       "$ref": "#/$defs/Confidence"
     },
+    "depends_on": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Depends On",
+      "type": "array"
+    },
     "effort": {
       "$ref": "#/$defs/Effort"
     },
@@ -109,7 +116,8 @@
     "plan",
     "touched_paths",
     "questions",
-    "confidence"
+    "confidence",
+    "depends_on"
   ],
   "title": "Assessment",
   "type": "object"

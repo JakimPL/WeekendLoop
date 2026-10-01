@@ -51,6 +51,7 @@ def build_issue(
         url=f"https://github.com/owner/repo/issues/{number}",
         open_linked_pull_requests=linked_pull_requests,
         last_foreign_activity_at=last_foreign_activity_at,
+        blocked_by=[],
     )
 
 

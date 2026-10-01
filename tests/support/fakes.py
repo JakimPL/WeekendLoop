@@ -126,6 +126,12 @@ def log_body(arguments):
 data = json.loads((here / "gh-data.json").read_text())
 if arguments[:2] == ["api", "user"]:
     print(data["login"])
+elif arguments[:2] == ["api", "graphql"]:
+    if data.get("graphql_error"):
+        print(data["graphql_error"], file=sys.stderr)
+        raise SystemExit(1)
+    for number, blocked_by in data.get("blockers", {}).items():
+        print(json.dumps({"number": int(number), "blocked_by": blocked_by}))
 elif arguments[:3] == ["api", "-X", "POST"] and arguments[3].endswith("/git/refs"):
     status = data.get("probe_status") or ("422" if data["push"] else "403")
     print(json.dumps({"message": "probe", "status": status}))

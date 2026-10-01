@@ -354,6 +354,7 @@ def build_assessment(
         touched_paths=["src/module.py"],
         questions=questions,
         confidence=Confidence.HIGH,
+        depends_on=[],
     )
 
 

@@ -228,6 +228,14 @@ def pending_candidates(
     return rank_candidates([issues[number] for number in signals], signals)
 
 
+def batch_issues(state: RunState, issues: dict[int, Issue]) -> list[Issue]:
+    return [
+        issues[task.issue_number]
+        for task in state.tasks
+        if task.status is not TaskStatus.INELIGIBLE and task.issue_number in issues
+    ]
+
+
 def assess_through_limits(
     policy: Policy,
     context: AssessorContext,
@@ -237,10 +245,11 @@ def assess_through_limits(
     progress: RunProgress,
     deadline: datetime,
     observed_costs: list[float],
+    batch: list[Issue],
 ) -> tuple[AssessmentOutcome, AllowanceVerdict | None]:
     spent = 0.0
     while True:
-        outcome = assess_issue(policy, context, issue, signals, supervisor)
+        outcome = assess_issue(policy, context, issue, signals, supervisor, batch)
         spent += outcome.cost_usd
         if outcome.outcome is not ClaudeOutcome.WINDOW_LIMIT:
             return outcome.model_copy(update={"cost_usd": spent}), None
@@ -288,6 +297,7 @@ def assess_pending(
     deadline: datetime,
 ) -> RunState:
     observed_costs: list[float] = []
+    batch = batch_issues(progress.state, issues)
     for issue, signals in pending_candidates(progress.state, issues):
         halted = hold_stop(supervisor.hold_while_paused(deadline))
         if halted is None and supervisor.stop_requested():
@@ -301,7 +311,7 @@ def assess_pending(
             append_event(progress.run_directory, EventType.BUDGET_EXHAUSTED, "assessor", None)
             break
         outcome, verdict = assess_through_limits(
-            policy, context, issue, signals, supervisor, progress, deadline, observed_costs
+            policy, context, issue, signals, supervisor, progress, deadline, observed_costs, batch
         )
         progress.put_task(assessed_task(progress.task(issue.number), outcome))
         progress.spend(outcome.cost_usd)

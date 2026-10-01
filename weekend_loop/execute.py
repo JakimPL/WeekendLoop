@@ -24,12 +24,15 @@ from weekend_loop.briefing import guidance_for, read_briefing
 from weekend_loop.claude_cli import agent_environment, read_oauth_token
 from weekend_loop.commands import command_environment
 from weekend_loop.confinement import Step, fan_out_environment
+from weekend_loop.dependencies import DependencyState, dependency_verdicts
 from weekend_loop.fences import render_fences
 from weekend_loop.gate import changed_python_files, evaluate_gate, parse_numstat, run_gate_commands
 from weekend_loop.mailbox import read_inbox
 from weekend_loop.models import (
     ActivityKind,
+    Assessment,
     BaselineResult,
+    Blocker,
     ClaudeOutcome,
     CommandResult,
     Consent,
@@ -148,9 +151,17 @@ def consent_for(issue: Issue, labels: LabelPolicy) -> Consent:
     return Consent.NEEDS_APPROVAL
 
 
+def standing_blockers(assessment: Assessment) -> list[Blocker]:
+    if not assessment.depends_on:
+        return assessment.blockers
+    return [
+        blocker for blocker in assessment.blockers if blocker is not Blocker.DEPENDS_ON_OPEN_ISSUE
+    ]
+
+
 def within_worker_limits(task: Task, policy: Policy, confirmed: bool) -> bool:
     assessment = task.assessment
-    if assessment is None or assessment.blockers:
+    if assessment is None or standing_blockers(assessment):
         return False
     if confirmed and assessment.verdict in CONFIRMED_VERDICTS:
         return True
@@ -415,13 +426,26 @@ def approved_tasks(
 ) -> list[Task]:
     inbox = read_inbox(run_directory.inbox)
     candidates = [task for task in state.tasks if task.assessment is not None]
-    approved: list[Task] = []
+    selected: list[Task] = []
     for task in execution_order(candidates):
         allowed, reason = selectable(task, issues.get(task.issue_number), policy, inbox)
         if allowed:
-            approved.append(task)
+            selected.append(task)
         elif task.status is TaskStatus.ASSESSED:
             append_event(run_directory, EventType.TASK_SKIPPED, reason, task.issue_number)
+    verdicts = dependency_verdicts(
+        state.tasks,
+        issues,
+        {task.issue_number for task in selected},
+        policy.worker.max_stack_depth,
+    )
+    approved: list[Task] = []
+    for task in selected:
+        verdict = verdicts[task.issue_number]
+        if verdict.state is DependencyState.SATISFIED:
+            approved.append(task)
+        else:
+            append_event(run_directory, EventType.TASK_SKIPPED, verdict.reason, task.issue_number)
     return approved
 
 

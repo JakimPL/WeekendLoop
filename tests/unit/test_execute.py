@@ -687,3 +687,46 @@ def test_a_short_window_about_to_reset_is_waited_out_and_the_task_still_runs(
     assert state.tasks[0].branch is not None
     events = (open_run_directory(policy.state_dir, RUN_ID)).events_path.read_text()
     assert "usage_parked" in events
+
+
+def test_a_dependency_the_assessor_names_is_no_blocker_of_its_own(workspace_policy: Policy) -> None:
+    waiting = build_assessment(
+        Verdict.EXECUTE, Effort.XS, Risk.TESTS, [Blocker.DEPENDS_ON_OPEN_ISSUE], []
+    )
+    unnamed = build_task(2, ISSUE_TITLE, TaskStatus.ASSESSED, ELIGIBLE, waiting)
+    named = unnamed.model_copy(
+        update={"assessment": waiting.model_copy(update={"depends_on": [1]})}
+    )
+    assert not within_worker_limits(unnamed, workspace_policy, False)
+    assert within_worker_limits(named, workspace_policy, False)
+
+
+def test_an_issue_that_builds_on_another_of_the_run_waits_for_it(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare(
+        tmp_path,
+        fake_binaries,
+        ["weekend:auto"],
+        {"logbook/records.py": FIXED_RECORDS},
+        delivery_payload("done", "fix(records): treat an empty speed as unknown", []),
+        3,
+        [1, 2],
+    )
+    run_directory = open_run_directory(policy.state_dir, RUN_ID)
+    state = load_run_state(run_directory)
+    parent, child = state.tasks
+    assert child.assessment is not None
+    built_on = child.model_copy(
+        update={"assessment": child.assessment.model_copy(update={"depends_on": [1]})}
+    )
+    save_run_state(run_directory, state.model_copy(update={"tasks": [parent, built_on]}))
+    assert execute(policy_path) == 0
+    finished = load_run_state(run_directory)
+    assert [task.status for task in finished.tasks] == [TaskStatus.REVIEW, TaskStatus.ASSESSED]
+    skipped = [
+        json.loads(line)["detail"]
+        for line in run_directory.events_path.read_text().splitlines()
+        if json.loads(line)["event"] == "task_skipped"
+    ]
+    assert skipped == ["builds on #1, which this run works first"]

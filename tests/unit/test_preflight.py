@@ -304,3 +304,17 @@ def test_preflight_names_how_much_work_the_memory_pool_fits(workspace_policy: Po
     refused = check_memory_pool(halved, small)
     assert refused.outcome is CheckOutcome.FAILED and refused.required
     assert "gate_memory_gb exceed the 6.0 GB pool" in refused.detail
+
+
+def test_a_board_that_hides_its_blocked_by_links_blocks_the_run(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy = policy_at(prepare_environment(tmp_path, fake_binaries, push=False))
+    data_path = fake_binaries / "gh-data.json"
+    data = json.loads(data_path.read_text())
+    refusal = "gh: Field 'blockedBy' doesn't exist on type 'Issue'"
+    data_path.write_text(json.dumps({**data, "graphql_error": refusal}))
+    report = run_preflight(policy, "dryrun", NOW, None)
+    (check,) = [check for check in report.checks if check.name == "issue dependencies"]
+    assert check.outcome is CheckOutcome.FAILED and check.required
+    assert check.detail == f"GitHub refused the query for blocked-by links: {refusal}"

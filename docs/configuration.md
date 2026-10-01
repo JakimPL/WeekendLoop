@@ -149,6 +149,7 @@ it work several at once, each on its own branch in a git worktree of its own und
 ```yaml
 worker:
   parallel: 2              # how many issues run at once; 1 keeps the single checkout
+  max_stack_depth: 2       # how many issues may build on each other in one run; 0 turns it off
   shared_paths:            # files many issues append to; an issue that touches one runs alone
     - "CHANGELOG.md"
     - "docs/generated/**"

@@ -259,6 +259,25 @@ tests, then merge the other.
   the docs, and list them under `worker.shared_paths`, so an issue that touches one runs alone.
 - State acceptance as checkbox lines. The assessor reads them as the goal, and the reviewer checks
   the branch against them.
+- Link the issues that build on each other on GitHub, with "Mark as blocked by" in the issue's
+  Relationships panel. See [Issues that build on each other](#issues-that-build-on-each-other).
+
+### Issues that build on each other
+
+Some issues only make sense on top of another: a feature that extends code a bug fix changes, or a
+screen that needs a route another issue adds. Worked from the base branch, such an issue would copy
+the code its parent is about to fix. The run learns these links in two ways:
+
+- **From GitHub.** An issue marked "blocked by" another open issue depends on it. This is the
+  dependable way, and the one you control. Triage reads the links each time, so a link you add on
+  Thursday counts on Friday.
+- **From the assessor.** The assessor sees the other open issues of the run, each by its title and
+  first sentence, and names the ones an issue builds on under `depends_on`. The triage plan lists
+  them under "Builds on", marked "found by the assessor"; link them on GitHub to keep them.
+
+An issue whose dependencies have all closed is worked as usual. An issue that builds on an issue
+still open waits, and the event log says which one it waits for. A dependency named either way is
+no blocker in the assessment: the run decides from the links.
 
 ## Running under systemd
 

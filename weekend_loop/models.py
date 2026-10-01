@@ -17,6 +17,7 @@ DEFAULT_BASE_BRANCH: Final[str] = "main"
 DEFAULT_BRANCH_PREFIX: Final[str] = "weekend/"
 DEFAULT_IDLE_MINUTES: Final[int] = 15
 DEFAULT_PARALLEL_WORKERS: Final[int] = 1
+DEFAULT_MAX_STACK_DEPTH: Final[int] = 2
 REPOSITORY_SLUG_PATTERN: Final[str] = r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
 CONFIG_FILENAME: Final[str] = "config.yaml"
 REFERENCE_FILENAME: Final[str] = "config.reference.yaml"
@@ -322,6 +323,14 @@ class Assessment(StructuredOutput):
     touched_paths: list[str]
     questions: list[str] = Field(max_length=MAX_QUESTIONS_PER_ASSESSMENT)
     confidence: Confidence
+    depends_on: list[int]
+
+    @model_validator(mode="before")
+    @classmethod
+    def written_before_dependencies(cls, data: Any) -> Any:  # noqa: ANN401
+        if isinstance(data, dict) and "depends_on" not in data:
+            return {**data, "depends_on": []}
+        return data
 
 
 class Delivery(StructuredOutput):
@@ -350,6 +359,7 @@ class Issue(Record):
     url: str
     open_linked_pull_requests: list[int]
     last_foreign_activity_at: datetime | None
+    blocked_by: list[int]
 
 
 class BoardLabel(Record):
@@ -375,6 +385,7 @@ class BoardIssue(Record):
     created_at: datetime
     updated_at: datetime
     state: IssueState
+    blocked_by: list[int] = Field(default_factory=list)
 
 
 class BoardPullRequest(Record):
@@ -402,6 +413,7 @@ class SpecSignals(Record):
     referenced_paths: list[str]
     resolved_paths: list[str]
     has_acceptance_criteria: bool
+    blocked_by: list[int] = Field(default_factory=list)
 
 
 class EligibilityDecision(Record):
@@ -826,6 +838,7 @@ class WorkerPolicy(ConfigSection):
     )
     branch_prefix: str = DEFAULT_BRANCH_PREFIX
     parallel: int = Field(default=DEFAULT_PARALLEL_WORKERS, ge=1)
+    max_stack_depth: int = Field(default=DEFAULT_MAX_STACK_DEPTH, ge=0)
     shared_paths: list[str] = Field(default_factory=list)
 
 

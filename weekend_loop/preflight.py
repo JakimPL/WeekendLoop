@@ -107,6 +107,10 @@ MEMORY_CAPS_TOO_LARGE_TEMPLATE: Final[str] = (
 FEWER_TASKS_TEMPLATE: Final[str] = (
     "{detail}; worker.parallel asks for {parallel}, so the run starts at most {tasks}"
 )
+DEPENDENCIES_READ_TEMPLATE: Final[str] = "{count} open issues are linked to what blocks them"
+DEPENDENCY_QUERY_FAILED_TEMPLATE: Final[str] = (
+    "GitHub refused the query for blocked-by links: {reason}"
+)
 SCOPES_PASSED_DETAIL: Final[str] = "systemd caps the memory of every task and gate"
 SCOPES_FAILED_DETAIL: Final[str] = (
     "systemd-run --user cannot start a scope here; the run waits for free memory, but nothing "
@@ -423,11 +427,29 @@ def probe_outcome(status: str) -> bool | None:
     return None
 
 
+def check_issue_dependencies(repo: RepoTarget, state_directory: Path) -> PreflightCheck:
+    name = "issue dependencies"
+    try:
+        token = read_token(repo.token_path())
+    except (FileNotFoundError, ValueError) as error:
+        return failed(name, True, str(error))
+    reader = GitHubReader(repo.slug, token, state_directory / CONFIG_DIRECTORY_NAME)
+    try:
+        blockers = reader.open_blockers()
+    except subprocess.CalledProcessError as error:
+        reason = (error.stderr or "").strip().splitlines()
+        detail = reason[0][:DETAIL_TAIL_CHARACTERS] if reason else "no answer"
+        return failed(name, True, DEPENDENCY_QUERY_FAILED_TEMPLATE.format(reason=detail))
+    linked = sum(1 for numbers in blockers.values() if numbers)
+    return passed(name, True, DEPENDENCIES_READ_TEMPLATE.format(count=linked))
+
+
 def github_checks(repo: RepoTarget, repo_key: str, state_directory: Path) -> list[PreflightCheck]:
     return [
         check_binary("gh", GH_BINARY, True),
         check_secret_file(f"{repo_key} github token", repo.token_path(), True),
         check_repository_access(repo, state_directory),
+        check_issue_dependencies(repo, state_directory),
     ]
 
 

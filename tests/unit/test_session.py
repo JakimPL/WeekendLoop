@@ -686,7 +686,7 @@ def asking_task(questions: list[str]) -> Task:
 def open_issue(updated_at: datetime) -> Issue:
     payload = issue_payload(1, ISSUE_TITLE, ISSUE_BODY, ["weekend:auto"], [])
     payload["updatedAt"] = updated_at.isoformat()
-    return issue_from_payload(payload, [])
+    return issue_from_payload(payload, [], [])
 
 
 def test_a_reply_that_settles_no_question_still_earns_a_fresh_verdict(tmp_path: Path) -> None:

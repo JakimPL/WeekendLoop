@@ -34,6 +34,20 @@ CLOSING_KEYWORD_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s+#(\d+)", re.IGNORECASE
 )
 BRANCH_ISSUE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?:^|[/_-])(\d{1,6})(?:[/_-]|$)")
+BLOCKERS_QUERY: Final[str] = """
+query($owner: String!, $name: String!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    issues(states: OPEN, first: 100, after: $endCursor) {
+      nodes { number blockedBy(first: 50) { nodes { number state } } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+BLOCKERS_FILTER: Final[str] = (
+    ".data.repository.issues.nodes[] | "
+    '{number, blocked_by: [.blockedBy.nodes[] | select(.state == "OPEN") | .number]}'
+)
 
 
 def read_token(path: Path) -> str:
@@ -85,7 +99,9 @@ def milestone_of(payload: dict[str, Any]) -> str | None:
     return text_of(value, "title") if isinstance(value, dict) else None
 
 
-def issue_from_payload(payload: dict[str, Any], open_linked_pull_requests: list[int]) -> Issue:
+def issue_from_payload(
+    payload: dict[str, Any], open_linked_pull_requests: list[int], blocked_by: list[int]
+) -> Issue:
     return Issue(
         number=int(payload["number"]),
         title=text_of(payload, "title"),
@@ -99,7 +115,18 @@ def issue_from_payload(payload: dict[str, Any], open_linked_pull_requests: list[
         url=text_of(payload, "url"),
         open_linked_pull_requests=open_linked_pull_requests,
         last_foreign_activity_at=None,
+        blocked_by=blocked_by,
     )
+
+
+def parse_blockers(output: str) -> dict[int, list[int]]:
+    blockers: dict[int, list[int]] = {}
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        item = json.loads(line)
+        blockers[int(item["number"])] = sorted(int(number) for number in item["blocked_by"])
+    return blockers
 
 
 def pull_request_from_payload(payload: dict[str, Any]) -> PullRequest:
@@ -220,7 +247,32 @@ class GitHubReader:
             ]
         )
         linked = pull_requests_by_issue(self.open_pull_requests(limit))
-        return [issue_from_payload(item, linked.get(int(item["number"]), [])) for item in payload]
+        blockers = self.open_blockers()
+        return [
+            issue_from_payload(
+                item, linked.get(int(item["number"]), []), blockers.get(int(item["number"]), [])
+            )
+            for item in payload
+        ]
+
+    def open_blockers(self) -> dict[int, list[int]]:
+        owner, name = self.slug.split("/", 1)
+        output = self.run(
+            [
+                "api",
+                "graphql",
+                "--paginate",
+                "-f",
+                f"query={BLOCKERS_QUERY}",
+                "-f",
+                f"owner={owner}",
+                "-f",
+                f"name={name}",
+                "--jq",
+                BLOCKERS_FILTER,
+            ]
+        )
+        return parse_blockers(output)
 
     def issue_comments(self, issue_number: int) -> list[IssueComment]:
         payload = self.run_json_object(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from weekend_loop.github import (
     issue_from_payload,
     last_foreign_activity,
     linked_issue_numbers,
+    parse_blockers,
     pull_request_from_payload,
     pull_requests_by_issue,
     read_token,
@@ -30,7 +32,7 @@ def build_reader(tmp_path: Path) -> GitHubReader:
 def test_the_listing_payload_becomes_an_issue_record() -> None:
     payload = issue_payload(7, "CSV export", "body", ["bug", "weekend:auto"], ["colleague"])
     payload["milestone"] = {"title": "v1"}
-    issue = issue_from_payload(payload, [12])
+    issue = issue_from_payload(payload, [12], [])
     assert issue.labels == ["bug", "weekend:auto"]
     assert issue.assignees == ["colleague"]
     assert issue.milestone == "v1"
@@ -138,3 +140,27 @@ def test_a_missing_or_empty_token_file_fails_loudly(tmp_path: Path) -> None:
     empty.write_text("\n")
     with pytest.raises(ValueError, match="empty"):
         read_token(empty)
+
+
+def test_open_issues_carry_what_blocks_them_on_github(tmp_path: Path, fake_binaries: Path) -> None:
+    write_github_data(
+        fake_binaries,
+        issues=[
+            issue_payload(13, "Saved rules", "body", [], []),
+            issue_payload(17, "Rules", "b", [], []),
+        ],
+        pull_requests=[],
+        comments={},
+        push=False,
+    )
+    data_path = fake_binaries / "gh-data.json"
+    data = json.loads(data_path.read_text())
+    data_path.write_text(json.dumps({**data, "blockers": {"17": [13], "13": []}}))
+    issues = {issue.number: issue for issue in build_reader(tmp_path).open_issues(50)}
+    assert issues[17].blocked_by == [13]
+    assert issues[13].blocked_by == []
+
+
+def test_the_blockers_answer_keeps_one_issue_per_line() -> None:
+    answer = '{"number": 17, "blocked_by": [13, 11]}\n\n{"number": 13, "blocked_by": []}\n'
+    assert parse_blockers(answer) == {17: [11, 13], 13: []}

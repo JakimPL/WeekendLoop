@@ -34,6 +34,9 @@ ASSESSOR_OUTPUT_FORMAT: Final[str] = "stream-json"
 ASSESSMENT_TRANSCRIPT_ROLE: Final[str] = "assessment"
 SECONDS_PER_MINUTE: Final[int] = 60
 FAILED_PLAN_TEMPLATE: Final[str] = "The assessor returned no verdict; the run ended as {outcome}."
+SUMMARY_CHARACTERS: Final[int] = 200
+LONE_ISSUE_TEXT: Final[str] = "none; this is the only issue in the run"
+NO_BLOCKERS_TEXT: Final[str] = "none"
 
 
 class AssessorPrompts(Record):
@@ -63,8 +66,32 @@ def render_spec_signals(signals: SpecSignals) -> str:
         f"- acceptance criteria stated: {'yes' if signals.has_acceptance_criteria else 'no'}",
         f"- referenced paths that exist: {', '.join(signals.resolved_paths) or 'none'}",
         f"- referenced paths not found: {', '.join(missing) or 'none'}",
+        f"- blocked by, as linked on GitHub: {numbered(signals.blocked_by) or NO_BLOCKERS_TEXT}",
     ]
     return "\n".join(lines)
+
+
+def numbered(numbers: list[int]) -> str:
+    return ", ".join(f"#{number}" for number in numbers)
+
+
+def summary_line(body: str) -> str:
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            sentence = stripped.split(". ", 1)[0]
+            return sentence[:SUMMARY_CHARACTERS]
+    return ""
+
+
+def render_batch_index(batch: list[Issue], current: int) -> str:
+    lines = [
+        f"- #{issue.number} {issue.title}: {summary_line(issue.body)}"
+        + (f" (blocked by {numbered(issue.blocked_by)})" if issue.blocked_by else "")
+        for issue in batch
+        if issue.number != current
+    ]
+    return "\n".join(lines) if lines else LONE_ISSUE_TEXT
 
 
 def render_worker_limits(worker: WorkerPolicy) -> str:
@@ -86,6 +113,7 @@ def render_assessor_prompt(
     repo_slug: str,
     briefing_block: str,
     limits_block: str,
+    batch_block: str,
 ) -> str:
     return template.format(
         issue_number=issue.number,
@@ -93,6 +121,7 @@ def render_assessor_prompt(
         spec_signals=render_spec_signals(signals),
         worker_limits=limits_block,
         briefing=briefing_block,
+        batch=batch_block,
         issue_title=issue.title,
         issue_body=issue.body.strip(),
     )
@@ -135,6 +164,7 @@ def failed_assessment(outcome: ClaudeOutcome) -> Assessment:
         touched_paths=[],
         questions=[],
         confidence=Confidence.LOW,
+        depends_on=[],
     )
 
 
@@ -161,6 +191,7 @@ def assess_issue(
     issue: Issue,
     signals: SpecSignals,
     supervisor: RunSupervisor,
+    batch: list[Issue],
 ) -> AssessmentOutcome:
     prompt = render_assessor_prompt(
         context.prompts.task_template,
@@ -169,6 +200,7 @@ def assess_issue(
         context.repo.slug,
         render_briefing_block(context.briefing, issue.number),
         render_worker_limits(policy.worker),
+        render_batch_index(batch, issue.number),
     )
     transcript = supervisor.transcript_for(ASSESSMENT_TRANSCRIPT_ROLE, issue.number)
     supervisor.enter(ActivityKind.ASSESSING, issue.number, transcript, None)

@@ -28,6 +28,7 @@ def sample_assessment() -> Assessment:
         touched_paths=["example_package/config/dataset.py"],
         questions=["Which deployments carry the exclusions?"],
         confidence=Confidence.MEDIUM,
+        depends_on=[4],
     )
 
 
@@ -72,3 +73,9 @@ def test_delivery_is_frozen() -> None:
     )
     with pytest.raises(ValidationError):
         delivery.summary = "changed"  # type: ignore[misc]
+
+
+def test_an_assessment_written_before_dependencies_still_loads() -> None:
+    written = sample_assessment().model_dump(mode="json")
+    del written["depends_on"]
+    assert Assessment.model_validate(written).depends_on == []
