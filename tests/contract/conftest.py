@@ -7,7 +7,13 @@ from typing import Any
 
 import pytest
 
-from tests.support.fakes import FAKE_CLAUDE, FAKE_GH, FAKE_SANDBOX_TOOL, install_fake
+from tests.support.fakes import (
+    FAKE_CLAUDE,
+    FAKE_GH,
+    FAKE_SANDBOX_TOOL,
+    install_confinement_fakes,
+    install_fake,
+)
 from tests.unit.conftest import base_policy, issue_payload, write_github_data, write_policy
 from weekend_loop.backends import BoardReader, BoardWriter, reader_for, writer_for
 from weekend_loop.board import create_board, open_board
@@ -100,6 +106,7 @@ def fake_binaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     install_fake(directory, "gh", FAKE_GH)
     install_fake(directory, "socat", FAKE_SANDBOX_TOOL)
     install_fake(directory, "bwrap", FAKE_SANDBOX_TOOL)
+    install_confinement_fakes(directory)
     monkeypatch.setenv("PATH", f"{directory}:/usr/bin:/bin")
     return directory
 

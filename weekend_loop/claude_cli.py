@@ -10,6 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, Protocol
 
+from weekend_loop.confinement import Confinement, confined, confined_environment, unit_name
 from weekend_loop.models import (
     ClaudeOutcome,
     ClaudeResult,
@@ -116,6 +117,7 @@ class ClaudeInvocation(Record):
     persist_session: bool
     transcript_path: Path
     idle_seconds: int
+    confinement: Confinement | None
 
 
 def build_command(invocation: ClaudeInvocation) -> list[str]:
@@ -164,6 +166,23 @@ def build_command(invocation: ClaudeInvocation) -> list[str]:
     if not invocation.persist_session:
         command.append("--no-session-persistence")
     return command
+
+
+def confined_command(invocation: ClaudeInvocation) -> list[str]:
+    command = build_command(invocation)
+    confinement = invocation.confinement
+    if confinement is None:
+        return command
+    return confined(command, confinement, unit_name(confinement.unit_prefix))
+
+
+def invocation_environment(
+    invocation: ClaudeInvocation, environment: dict[str, str]
+) -> dict[str, str]:
+    confinement = invocation.confinement
+    if confinement is None:
+        return environment
+    return confined_environment(environment, confinement)
 
 
 def agent_environment(agent_home: Path, oauth_token: str, extra: dict[str, str]) -> dict[str, str]:
@@ -224,9 +243,9 @@ def run_claude(
     observed_at = datetime.now(UTC)
     with transcript.open("wb") as stdout_file, stderr_path(transcript).open("wb") as stderr_file:
         process = subprocess.Popen(
-            build_command(invocation),
+            confined_command(invocation),
             cwd=invocation.working_directory,
-            env=environment,
+            env=invocation_environment(invocation, environment),
             stdin=subprocess.DEVNULL,
             stdout=stdout_file,
             stderr=stderr_file,

@@ -48,6 +48,7 @@ ACTIVITY_VERBS: Final[dict[ActivityKind, str]] = {
     ActivityKind.WORKING: "working on",
     ActivityKind.GATING: "gating",
     ActivityKind.PARKED: "parked",
+    ActivityKind.WAITING_FOR_MEMORY: "waiting for memory",
     ActivityKind.PUBLISHING: "publishing",
 }
 

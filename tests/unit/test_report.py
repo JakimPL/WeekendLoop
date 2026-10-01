@@ -8,8 +8,11 @@ from tests.unit.conftest import (
     build_task,
 )
 from weekend_loop.models import (
+    BaselineResult,
     Blocker,
+    CommandResult,
     Effort,
+    GateResult,
     Overlap,
     RepoMode,
     Risk,
@@ -145,3 +148,40 @@ def test_the_digest_asks_for_care_where_two_branches_changed_the_same_file() -> 
     assert "- #12 and #13 both changed a.py: merge them one at a time" in section
     assert section.count("#12 and #13") == 1
     assert "## Merge with care" not in render_digest(state, SLUG)
+
+
+def gate_command(command: str, peak_gb: float | None, capped: bool) -> CommandResult:
+    return CommandResult(
+        command=command,
+        exit_code=137 if capped else 0,
+        duration_seconds=1.0,
+        output_tail="",
+        peak_memory_gb=peak_gb,
+        stopped_at_memory_cap=capped,
+    )
+
+
+def test_the_digest_names_the_memory_each_gate_took_and_what_hit_its_cap() -> None:
+    state = worked_state([(12, None, None)])
+    capped_gate = GateResult(
+        passed=False,
+        commands=[gate_command("pytest -q", 9.9, True)],
+        diff_lines=4,
+        forbidden_paths_touched=[],
+        secret_matches=[],
+        binary_files=[],
+        commit_count=1,
+        changed_paths=["a.py"],
+    )
+    measured = state.model_copy(
+        update={
+            "baseline": BaselineResult(
+                commit="abc", passed=True, commands=[gate_command("pytest -q", 7.25, False)]
+            ),
+            "tasks": [state.tasks[0].model_copy(update={"gate": capped_gate})],
+        }
+    )
+    section = render_digest(measured, SLUG).split("## Memory")[1]
+    assert "- the base branch: gate peak 7.2 GB" in section
+    assert "- #12: gate peak 9.9 GB; `pytest -q` stopped at its memory cap" in section
+    assert "## Memory" not in render_digest(state, SLUG)

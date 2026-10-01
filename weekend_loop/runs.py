@@ -9,6 +9,7 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict
 
 from weekend_loop.models import (
+    BaselineResult,
     EventType,
     Pulse,
     RunEvent,
@@ -226,6 +227,10 @@ class RunProgress:
             self.state = self.state.model_copy(
                 update={"stop_reason": reason, "stop_detail": detail}
             )
+
+    def record_baseline(self, baseline: BaselineResult) -> None:
+        with self.lock:
+            self.state = self.state.model_copy(update={"baseline": baseline})
 
     def enter_phase(self, phase: RunPhase) -> None:
         with self.lock:

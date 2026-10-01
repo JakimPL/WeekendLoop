@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 
 from tests.unit.conftest import issue_payload, write_github_data, write_test_policy
+from weekend_loop.admission import MemoryReading
 from weekend_loop.claude_cli import read_oauth_token
 from weekend_loop.models import (
     BudgetPolicy,
     CheckOutcome,
     Policy,
+    ResourcesPolicy,
     UsagePolicy,
     UsageReading,
     UsageWindow,
@@ -20,6 +22,7 @@ from weekend_loop.models import (
 from weekend_loop.policy import policy_at, repo_target
 from weekend_loop.preflight import (
     SOCKET_FILTER_PACKAGE,
+    check_memory_pool,
     check_oauth_token,
     check_secret_file,
     check_settings_file,
@@ -275,3 +278,29 @@ def test_a_missing_socket_filter_warns_and_names_the_install(tmp_path: Path) -> 
         check = check_socket_filter(node_modules, False)
         assert check.outcome is CheckOutcome.FAILED and not check.required
         assert "npm install -g @anthropic-ai/sandbox-runtime" in check.detail
+
+
+def test_preflight_names_how_much_work_the_memory_pool_fits(workspace_policy: Policy) -> None:
+    reading = MemoryReading(total_gb=64.0, available_gb=40.0, pressure_percent=0.0)
+    sized = workspace_policy.model_copy(
+        update={
+            "resources": ResourcesPolicy(
+                memory_pool_gb=32.0, task_memory_gb=8.0, gate_memory_gb=10.0
+            ),
+            "worker": workspace_policy.worker.model_copy(update={"parallel": 3}),
+        }
+    )
+    check = check_memory_pool(sized, reading)
+    assert check.outcome is CheckOutcome.PASSED
+    assert check.detail == (
+        "pool 32.0 GB of 64 GB; 3 tasks at once (8 GB each), 1 gate at a time (10 GB each)"
+    )
+    eager = sized.model_copy(update={"worker": sized.worker.model_copy(update={"parallel": 6})})
+    warned = check_memory_pool(eager, reading)
+    assert warned.outcome is CheckOutcome.FAILED and not warned.required
+    assert warned.detail.endswith("worker.parallel asks for 6, so the run starts at most 3")
+    small = MemoryReading(total_gb=12.0, available_gb=8.0, pressure_percent=0.0)
+    halved = sized.model_copy(update={"resources": ResourcesPolicy(gate_memory_gb=10.0)})
+    refused = check_memory_pool(halved, small)
+    assert refused.outcome is CheckOutcome.FAILED and refused.required
+    assert "gate_memory_gb exceed the 6.0 GB pool" in refused.detail

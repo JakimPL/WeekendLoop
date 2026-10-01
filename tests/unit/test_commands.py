@@ -6,6 +6,7 @@ from typing import Final
 
 from tests.unit.test_resume import process_gone
 from weekend_loop.commands import TIMEOUT_EXIT_CODE, command_environment, run_command
+from weekend_loop.confinement import Confinement, OomPolicy
 
 SPAWN_GRANDCHILD: Final[str] = (
     "import subprocess, sys, time; "
@@ -14,6 +15,14 @@ SPAWN_GRANDCHILD: Final[str] = (
     "time.sleep(60)"
 )
 SPAWN_TIMEOUT_SECONDS: Final[int] = 2
+SCOPED: Final[Confinement] = Confinement(
+    unit_prefix="wl-test-1-gate",
+    memory_gb=1.0,
+    cpus=[],
+    oom_policy=OomPolicy.KILL,
+    runtime_seconds=60,
+    scoped=True,
+)
 
 
 def test_a_command_reports_its_exit_code_and_the_tail_of_its_output(tmp_path: Path) -> None:
@@ -22,6 +31,7 @@ def test_a_command_reports_its_exit_code_and_the_tail_of_its_output(tmp_path: Pa
         tmp_path,
         command_environment({}),
         SPAWN_TIMEOUT_SECONDS,
+        None,
     )
     assert result.exit_code == 3
     assert result.output_tail == "built"
@@ -34,6 +44,24 @@ def test_a_command_past_its_time_ends_with_every_process_it_started(tmp_path: Pa
         tmp_path,
         command_environment({}),
         SPAWN_TIMEOUT_SECONDS,
+        None,
     )
     assert result.exit_code == TIMEOUT_EXIT_CODE
     assert process_gone(int(pid_file.read_text()))
+
+
+def test_a_scoped_command_that_systemd_stopped_for_memory_says_so(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    (fake_binaries / "systemctl-result.txt").write_text("oom-kill")
+    result = run_command(
+        "python3 -c 'raise SystemExit(137)'",
+        tmp_path,
+        command_environment({}),
+        SPAWN_TIMEOUT_SECONDS,
+        SCOPED,
+    )
+    assert result.exit_code == 137
+    assert result.stopped_at_memory_cap
+    resets = (fake_binaries / "systemctl-calls.jsonl").read_text()
+    assert "reset-failed" in resets

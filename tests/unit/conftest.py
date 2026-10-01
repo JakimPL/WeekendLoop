@@ -13,6 +13,7 @@ from tests.support.fakes import (
     FAKE_GH,
     FAKE_GIT,
     FAKE_SANDBOX_TOOL,
+    install_confinement_fakes,
     install_fake,
 )
 from weekend_loop.models import (
@@ -52,6 +53,7 @@ def fake_binaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     install_fake(directory, "gh", FAKE_GH)
     install_fake(directory, "socat", FAKE_SANDBOX_TOOL)
     install_fake(directory, "bwrap", FAKE_SANDBOX_TOOL)
+    install_confinement_fakes(directory)
     monkeypatch.setenv("PATH", f"{directory}:{Path('/usr/bin')}:{Path('/bin')}")
     return directory
 

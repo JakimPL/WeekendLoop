@@ -65,6 +65,10 @@ DEFAULT_FOREIGN_ACTIVITY_WINDOW_HOURS: Final[int] = 48
 DEFAULT_GIT_AUTHOR_NAME: Final[str] = "Weekend Loop"
 DEFAULT_COMMENT_FOOTER: Final[str] = "— weekend-loop run {run_id}"
 DEFAULT_TIMEZONE: Final[str] = "UTC"
+DEFAULT_MEMORY_RESERVE_GB: Final[float] = 4.0
+DEFAULT_TASK_MEMORY_GB: Final[float] = 4.0
+DEFAULT_GATE_MEMORY_GB: Final[float] = 8.0
+DEFAULT_GATES_AT_ONCE: Final[int] = 1
 
 DEFAULT_LABEL_NAMESPACE: Final[str] = "weekend:"
 LABEL_NAMESPACE_PATTERN: Final[str] = r"^[A-Za-z0-9][A-Za-z0-9._/-]*[:/-]$"
@@ -242,6 +246,7 @@ class StopReason(StrEnum):
     WINDOW_CLOSED = "window_closed"
     ENVELOPE = "envelope"
     SETUP_FAILED = "setup_failed"
+    BASELINE_FAILED = "baseline_failed"
 
 
 class EventType(StrEnum):
@@ -260,6 +265,8 @@ class EventType(StrEnum):
     ACCEPTANCE_FINISHED = "acceptance_finished"
     TASK_FINISHED = "task_finished"
     TASK_FAILED = "task_failed"
+    MEMORY_WAITED = "memory_waited"
+    BASELINE_FINISHED = "baseline_finished"
     BRANCH_PUSHED = "branch_pushed"
     PULL_REQUEST_OPENED = "pull_request_opened"
     COMMENT_POSTED = "comment_posted"
@@ -407,6 +414,14 @@ class CommandResult(Record):
     exit_code: int
     duration_seconds: float
     output_tail: str
+    peak_memory_gb: float | None = None
+    stopped_at_memory_cap: bool = False
+
+
+class BaselineResult(Record):
+    commit: str
+    passed: bool
+    commands: list[CommandResult]
 
 
 class GateResult(Record):
@@ -479,6 +494,7 @@ class RunState(Record):
     kind: RunKind | None = None
     deadline_at: datetime | None = None
     repo_slug: str | None = None
+    baseline: BaselineResult | None = None
 
 
 class ActivityKind(StrEnum):
@@ -488,6 +504,7 @@ class ActivityKind(StrEnum):
     GATING = "gating"
     PARKED = "parked"
     PAUSED = "paused"
+    WAITING_FOR_MEMORY = "waiting_for_memory"
     PUBLISHING = "publishing"
 
 
@@ -777,6 +794,25 @@ DEFAULT_ALLOWED_RISK: Final[tuple[Risk, ...]] = (
 )
 
 
+class ResourcesPolicy(ConfigSection):
+    memory_pool_gb: float | None = Field(default=None, gt=0)
+    memory_reserve_gb: float = Field(default=DEFAULT_MEMORY_RESERVE_GB, ge=0)
+    task_memory_gb: float = Field(default=DEFAULT_TASK_MEMORY_GB, gt=0)
+    gate_memory_gb: float = Field(default=DEFAULT_GATE_MEMORY_GB, gt=0)
+    gates_at_once: int = Field(default=DEFAULT_GATES_AT_ONCE, ge=1)
+    cpus_per_task: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def caps_fit_the_pool(self) -> ResourcesPolicy:
+        if self.memory_pool_gb is None:
+            return self
+        if self.task_memory_gb > self.memory_pool_gb:
+            raise ValueError("task_memory_gb exceeds memory_pool_gb")
+        if self.gate_memory_gb > self.memory_pool_gb:
+            raise ValueError("gate_memory_gb exceeds memory_pool_gb")
+        return self
+
+
 class WorkerPolicy(ConfigSection):
     timeout_minutes: int = Field(default=DEFAULT_TIMEOUT_MINUTES, ge=1)
     assessor_timeout_minutes: int = Field(default=DEFAULT_ASSESSOR_TIMEOUT_MINUTES, ge=1)
@@ -975,6 +1011,7 @@ class Policy(ConfigSection):
     usage: UsagePolicy = Field(default_factory=UsagePolicy)
     models: ModelPolicy = Field(default_factory=ModelPolicy)
     worker: WorkerPolicy = Field(default_factory=WorkerPolicy)
+    resources: ResourcesPolicy = Field(default_factory=ResourcesPolicy)
     labels: LabelPolicy = Field(default_factory=lambda: LabelPolicy.model_validate({}))
     eligibility: EligibilityPolicy = Field(default_factory=EligibilityPolicy)
 

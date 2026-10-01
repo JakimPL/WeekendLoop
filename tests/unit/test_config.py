@@ -178,3 +178,12 @@ def test_the_operator_can_be_someone_other_than_the_token(tmp_path: Path) -> Non
 def test_without_an_operator_login_the_token_account_is_the_operator(tmp_path: Path) -> None:
     policy = policy_at(workspace_with(tmp_path, MINIMAL_CONFIG))
     assert board_operator_login(policy.identity, StandInReader()) == TOKEN_LOGIN
+
+
+def test_a_memory_cap_larger_than_the_pool_is_refused(tmp_path: Path) -> None:
+    document = {
+        **MINIMAL_CONFIG,
+        "resources": {"memory_pool_gb": 8.0, "gate_memory_gb": 10.0},
+    }
+    with pytest.raises(ConfigError, match="gate_memory_gb exceeds memory_pool_gb"):
+        policy_at(workspace_with(tmp_path, document))

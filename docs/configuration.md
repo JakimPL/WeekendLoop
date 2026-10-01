@@ -163,6 +163,32 @@ whose assessment names no paths at all. Files like these are appended to, never 
 [docs/operating.md](operating.md#working-in-parallel) describes how a run in waves behaves, what to
 do at merge time, and how to write issues that parallelise well.
 
+## Memory
+
+A run shares the machine with you. It gives its tasks a pool of memory and starts a task only
+when the pool, and the memory the machine has free, can hold it:
+
+```yaml
+resources:
+  memory_pool_gb: 32         # all a run's tasks together; half the machine when left out
+  memory_reserve_gb: 10      # what the machine keeps free for everything else
+  task_memory_gb: 8          # one worker and the tests it runs itself
+  gate_memory_gb: 10         # one gate, setup or hidden test command
+  gates_at_once: 1           # how many gates run side by side
+  cpus_per_task: 6           # each task's processors; pytest -n auto starts as many workers
+```
+
+Size `task_memory_gb` and `gate_memory_gb` from what one test run of your repository takes, with
+some room on top. The digest's "Memory" section shows the peak of every gate, so the first run
+tells you what the numbers should be. `weekend-loop preflight` prints how many tasks the pool fits
+at once, and warns when `worker.parallel` asks for more.
+
+With a systemd user session, each worker and each command runs in a scope of its own, capped at
+its size. A task that outgrows its cap is stopped alone, and the digest says which command hit
+it. Without systemd, the run still waits for free memory before it starts a task, and preflight
+says that nothing caps a task that grows past its share. `cpus_per_task` gives each task its own
+processors, so test runners that start one worker per processor start fewer.
+
 ## Prompt overrides
 
 To replace a built-in prompt, put a file with the same name in `<workspace>/prompts/`:

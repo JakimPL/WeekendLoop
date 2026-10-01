@@ -143,7 +143,7 @@ def test_the_worker_runs_under_the_sandboxed_fence_with_its_own_budget(
         transcript=tmp_path / "worker-1.jsonl",
     )
     command = build_command(
-        worker_invocation(workspace_policy, prompts, "do the task", tmp_path, call)
+        worker_invocation(workspace_policy, prompts, "do the task", tmp_path, call, None)
     )
     pairs = list(zip(command, command[1:], strict=False))
     assert ("--permission-mode", "acceptEdits") in pairs
@@ -167,7 +167,7 @@ def test_a_resumed_worker_names_its_session_and_carries_what_is_left_of_its_budg
         session_id="session-id", resume=True, budget_usd=2.5, transcript=tmp_path / "worker-2.jsonl"
     )
     command = build_command(
-        worker_invocation(workspace_policy, prompts, RESUME_PROMPT, tmp_path, call)
+        worker_invocation(workspace_policy, prompts, RESUME_PROMPT, tmp_path, call, None)
     )
     pairs = list(zip(command, command[1:], strict=False))
     assert ("--resume", "session-id") in pairs

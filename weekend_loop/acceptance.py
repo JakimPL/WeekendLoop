@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Final
 
 from weekend_loop.commands import DEFAULT_COMMAND_TIMEOUT_SECONDS, run_command
+from weekend_loop.confinement import Confinement
 from weekend_loop.models import CommandResult, RepoTarget
 
 ACCEPTANCE_MAP_FILENAME: Final[str] = "acceptance.json"
@@ -25,7 +26,11 @@ def load_acceptance_map(path: Path, root: Path) -> dict[int, Path]:
 
 
 def run_acceptance_test(
-    repo: RepoTarget, test_file: Path, workbench: Path, environment: dict[str, str]
+    repo: RepoTarget,
+    test_file: Path,
+    workbench: Path,
+    environment: dict[str, str],
+    confinement: Confinement | None,
 ) -> CommandResult | None:
     if repo.acceptance_command is None:
         return None
@@ -37,6 +42,8 @@ def run_acceptance_test(
         TEST_FILE_PLACEHOLDER, str(copied.relative_to(workbench))
     )
     try:
-        return run_command(command, workbench, environment, DEFAULT_COMMAND_TIMEOUT_SECONDS)
+        return run_command(
+            command, workbench, environment, DEFAULT_COMMAND_TIMEOUT_SECONDS, confinement
+        )
     finally:
         shutil.rmtree(directory, ignore_errors=True)

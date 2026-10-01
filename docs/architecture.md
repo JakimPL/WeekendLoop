@@ -53,6 +53,10 @@ weekend_loop/gate.py        diff policy, secret scan and the repository's own ve
 weekend_loop/acceptance.py  hidden tests the worker never sees, run against the delivered branch
 weekend_loop/execute.py     the execute phase: consent, branch, worker, commit, gate, ledger
 weekend_loop/waves.py       groups the approved tasks into waves whose touched paths are disjoint
+weekend_loop/admission.py   the memory pool: who may start or gate now, and on which processors
+weekend_loop/confinement.py runs a command in a capped systemd scope, and reads what it took
+weekend_loop/run_resources.py the run's admission and the cap of each step of a task
+weekend_loop/processes.py   ends a process and everything it started
 weekend_loop/publish.py     the publish phase: push, draft pull request, comment, label, digest
 weekend_loop/session.py     one unattended weekend: triage, the approved work, the digest
 weekend_loop/prepare.py     the mid-week round: triage, the questions on each issue, the alert

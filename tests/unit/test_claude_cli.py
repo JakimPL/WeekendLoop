@@ -158,6 +158,7 @@ def build_invocation(
         persist_session=False,
         transcript_path=tmp_path / "transcripts" / "call-1.jsonl",
         idle_seconds=IDLE_SECONDS,
+        confinement=None,
     )
 
 

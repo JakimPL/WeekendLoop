@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Final
 
 from weekend_loop.acceptance import acceptance_map_path, load_acceptance_map, run_acceptance_test
+from weekend_loop.admission import BASELINE_HOLDER, ReservationKind, tasks_at_once
 from weekend_loop.allowance import await_allowance
 from weekend_loop.attempt import (
     BenchKind,
@@ -21,11 +23,13 @@ from weekend_loop.backends import BoardReader, repository_token
 from weekend_loop.briefing import guidance_for, read_briefing
 from weekend_loop.claude_cli import agent_environment, read_oauth_token
 from weekend_loop.commands import command_environment
+from weekend_loop.confinement import Step, fan_out_environment
 from weekend_loop.fences import render_fences
 from weekend_loop.gate import changed_python_files, evaluate_gate, parse_numstat, run_gate_commands
 from weekend_loop.mailbox import read_inbox
 from weekend_loop.models import (
     ActivityKind,
+    BaselineResult,
     ClaudeOutcome,
     CommandResult,
     Consent,
@@ -50,6 +54,7 @@ from weekend_loop.models import (
 from weekend_loop.publish import publishable
 from weekend_loop.records import append_record, write_record
 from weekend_loop.report import EFFORT_ORDER
+from weekend_loop.run_resources import RunResources, open_run_resources
 from weekend_loop.runs import RunDirectory, RunProgress, append_event, ledger_path
 from weekend_loop.supervision import STOP_DETAIL, Hold, RunSupervisor
 from weekend_loop.waves import Wave, overlaps_within, sibling_paths, waves_of
@@ -61,6 +66,7 @@ from weekend_loop.workbench import (
     commit_changes,
     commit_count,
     current_branch,
+    current_commit,
     diff_text,
     discard_changes,
     fetch_base,
@@ -69,6 +75,8 @@ from weekend_loop.workbench import (
     prune_worktrees,
     registered_worktrees,
     remove_worktree,
+    run_setup_commands,
+    setup_environment,
     write_askpass_script,
 )
 from weekend_loop.worker import TaskGuidance, abandoned_delivery, load_worker_prompts
@@ -110,6 +118,15 @@ TASK_FAILURES: Final[tuple[type[Exception], ...]] = (
 FAILED_COMMAND_TEMPLATE: Final[str] = "{command} failed with exit {exit_code}: {reason}"
 TIMED_OUT_COMMAND_TEMPLATE: Final[str] = "{command} ran out of time after {seconds:.0f}s"
 FAILURE_LINE_CHARACTERS: Final[int] = 200
+MEMORY_WAIT_DETAILS: Final[dict[ReservationKind, str]] = {
+    ReservationKind.WORKING: "waits for memory to start",
+    ReservationKind.GATING: "waits for memory to run the gate",
+}
+BASELINE_PASSED_DETAIL: Final[str] = "the base branch passes its own gate"
+BASELINE_FAILED_TEMPLATE: Final[str] = (
+    "the base branch fails its own gate: {command} exited {exit_code}{cap}"
+)
+MEMORY_CAP_SUFFIX: Final[str] = " at its memory cap"
 WAVE_DETAIL_TEMPLATE: Final[str] = "wave {number}: {issues}"
 OVERLAP_DETAIL_TEMPLATE: Final[str] = "#{first} and #{second} both changed {paths}"
 
@@ -215,12 +232,30 @@ def run_task(
     progress: RunProgress,
     deadline: datetime,
     observed_costs: list[float],
+    resources: RunResources,
 ) -> tuple[Task, WorkerOutcome, Halt | None]:
     outcome, halt = work_on(
-        policy, bench, task, issue, guidance, supervisor, progress, deadline, observed_costs
+        policy,
+        bench,
+        task,
+        issue,
+        guidance,
+        supervisor,
+        progress,
+        deadline,
+        observed_costs,
+        resources,
     )
     return settle(
-        policy, bench, task.issue_number, outcome, halt, acceptance_tests, supervisor, progress
+        policy,
+        bench,
+        task.issue_number,
+        outcome,
+        halt,
+        acceptance_tests,
+        supervisor,
+        progress,
+        resources,
     )
 
 
@@ -233,6 +268,7 @@ def settle(
     acceptance_tests: dict[int, Path],
     supervisor: RunSupervisor,
     progress: RunProgress,
+    resources: RunResources,
 ) -> tuple[Task, WorkerOutcome, Halt | None]:
     worked = progress.task(issue_number).model_copy(update={"delivery": outcome.delivery})
     progress.put_task(worked)
@@ -241,10 +277,11 @@ def settle(
     if outcome.delivery.status is DeliveryStatus.NEEDS_INPUT:
         discard_changes(bench.workbench, bench.git_settings)
         return finish_task(worked, outcome, None, None), outcome, halt
+    hold_memory(resources, supervisor, progress, issue_number, ReservationKind.GATING, always)
     supervisor.enter(ActivityKind.GATING, issue_number, None, None)
-    gate, diff = judge_branch(policy, bench, outcome, worked, progress)
+    gate, diff = judge_branch(policy, bench, outcome, worked, progress, resources)
     acceptance = acceptance_result(
-        bench.repo, worked, bench.workbench, acceptance_tests, gate.passed
+        policy, bench.repo, worked, bench.workbench, acceptance_tests, gate.passed, resources
     )
     if acceptance is not None:
         append_event(
@@ -260,7 +297,12 @@ def settle(
 
 
 def judge_branch(
-    policy: Policy, bench: TaskBench, outcome: WorkerOutcome, task: Task, progress: RunProgress
+    policy: Policy,
+    bench: TaskBench,
+    outcome: WorkerOutcome,
+    task: Task,
+    progress: RunProgress,
+    resources: RunResources,
 ) -> tuple[GateResult, str]:
     workbench = bench.workbench
     git_settings = bench.git_settings
@@ -275,7 +317,8 @@ def judge_branch(
             bench.repo.gate_commands,
             changed_python_files(files),
             workbench,
-            command_environment(WORKER_ENVIRONMENT),
+            gate_environment(policy),
+            resources.confinement(task.issue_number, Step.GATE),
         ),
         commit_count(workbench, base, git_settings),
         policy.worker.max_diff_lines,
@@ -291,16 +334,28 @@ def judge_branch(
 
 
 def acceptance_result(
+    policy: Policy,
     repo: RepoTarget,
     task: Task,
     workbench: Path,
     acceptance_tests: dict[int, Path],
     gate_passed: bool,
+    resources: RunResources,
 ) -> CommandResult | None:
     test_file = acceptance_tests.get(task.issue_number)
     if test_file is None or not gate_passed:
         return None
-    return run_acceptance_test(repo, test_file, workbench, command_environment(WORKER_ENVIRONMENT))
+    return run_acceptance_test(
+        repo,
+        test_file,
+        workbench,
+        gate_environment(policy),
+        resources.confinement(task.issue_number, Step.ACCEPTANCE),
+    )
+
+
+def gate_environment(policy: Policy) -> dict[str, str]:
+    return command_environment({**WORKER_ENVIRONMENT, **fan_out_environment(policy.resources)})
 
 
 def commit_subject(outcome: WorkerOutcome, title: str) -> str:
@@ -388,17 +443,97 @@ def execute_run(
     acceptance_tests = load_acceptance_map(
         acceptance_map_path(policy.state_dir), policy.workspace.acceptance_dir
     )
+    resources = open_run_resources(policy, state.run_id)
     halt = finish_interrupted_tasks(
-        policy, repo, repo_key, issues, acceptance_tests, supervisor, progress, deadline
+        policy,
+        repo,
+        repo_key,
+        issues,
+        acceptance_tests,
+        supervisor,
+        progress,
+        deadline,
+        resources,
     )
     if halt is not None:
         return close_execution(progress, halt, [], 0)
     approved = approved_tasks(policy, progress.state, issues, run_directory)
     workbench, git_settings = prepare_execution(policy, repo, repo_key)
     bench = task_bench(policy, repo, workbench, git_settings, BenchKind.CHECKOUT)
+    halt = baseline_halt(policy, bench, resources, supervisor, progress) if approved else None
+    if halt is not None:
+        append_event(run_directory, EventType.RUN_ABORTED, halt.detail, None)
+        return close_execution(progress, halt, approved, 0)
     return work_through(
-        policy, bench, repo_key, approved, issues, progress, acceptance_tests, supervisor, deadline
+        policy,
+        bench,
+        repo_key,
+        approved,
+        issues,
+        progress,
+        acceptance_tests,
+        supervisor,
+        deadline,
+        resources,
     )
+
+
+def baseline_halt(
+    policy: Policy,
+    bench: TaskBench,
+    resources: RunResources,
+    supervisor: RunSupervisor,
+    progress: RunProgress,
+) -> Halt | None:
+    commit = current_commit(bench.workbench, bench.git_settings)
+    recorded = progress.state.baseline
+    if recorded is not None and recorded.commit == commit and recorded.passed:
+        return None
+    hold_memory(resources, supervisor, progress, BASELINE_HOLDER, ReservationKind.GATING, always)
+    supervisor.enter(ActivityKind.GATING, None, None, None)
+    try:
+        baseline = BaselineResult(
+            commit=commit, passed=False, commands=baseline_commands(policy, bench, resources)
+        )
+    finally:
+        supervisor.leave(None)
+        resources.admission.release(BASELINE_HOLDER)
+    failed = [result for result in baseline.commands if result.exit_code != 0]
+    progress.record_baseline(baseline.model_copy(update={"passed": not failed}))
+    progress.save()
+    if not failed:
+        append_event(
+            progress.run_directory, EventType.BASELINE_FINISHED, BASELINE_PASSED_DETAIL, None
+        )
+        return None
+    detail = BASELINE_FAILED_TEMPLATE.format(
+        command=failed[0].command,
+        exit_code=failed[0].exit_code,
+        cap=MEMORY_CAP_SUFFIX if failed[0].stopped_at_memory_cap else "",
+    )
+    append_event(progress.run_directory, EventType.BASELINE_FINISHED, detail, None)
+    return Halt(reason=StopReason.BASELINE_FAILED, detail=detail)
+
+
+def baseline_commands(
+    policy: Policy, bench: TaskBench, resources: RunResources
+) -> list[CommandResult]:
+    setup = run_setup_commands(
+        bench.repo,
+        bench.workbench,
+        setup_environment(),
+        resources.confinement(BASELINE_HOLDER, Step.SETUP),
+    )
+    if any(result.exit_code != 0 for result in setup):
+        return setup
+    gate = run_gate_commands(
+        bench.repo.gate_commands,
+        [],
+        bench.workbench,
+        gate_environment(policy),
+        resources.confinement(BASELINE_HOLDER, Step.GATE),
+    )
+    return [*setup, *gate]
 
 
 def task_bench(
@@ -412,7 +547,7 @@ def task_bench(
         environment=agent_environment(
             policy.agent_home,
             read_oauth_token(policy.workspace.oauth_token_path),
-            WORKER_ENVIRONMENT,
+            {**WORKER_ENVIRONMENT, **fan_out_environment(policy.resources)},
         ),
         kind=kind,
     )
@@ -484,9 +619,13 @@ def finish_interrupted_tasks(
     supervisor: RunSupervisor,
     progress: RunProgress,
     deadline: datetime,
+    resources: RunResources,
 ) -> Halt | None:
     working = [task for task in progress.state.tasks if task.status is TaskStatus.WORKING]
     for task in working:
+        hold_memory(
+            resources, supervisor, progress, task.issue_number, ReservationKind.WORKING, always
+        )
         try:
             halt = finish_interrupted_task(
                 policy,
@@ -498,9 +637,12 @@ def finish_interrupted_tasks(
                 supervisor,
                 progress,
                 deadline,
+                resources,
             )
         except TASK_FAILURES as error:
             halt = failed_task_halt(policy, progress, supervisor, task.issue_number, error)
+        finally:
+            resources.admission.release(task.issue_number)
         if halt is not None:
             return halt
     return None
@@ -522,6 +664,7 @@ def finish_interrupted_task(
     supervisor: RunSupervisor,
     progress: RunProgress,
     deadline: datetime,
+    resources: RunResources,
 ) -> Halt | None:
     bench, on_task_branch = interrupted_bench(policy, repo, repo_key, task)
     issue = issues.get(task.issue_number)
@@ -545,7 +688,15 @@ def finish_interrupted_task(
     if action is ResumeAction.SETTLE:
         outcome = recorded_outcome(progress.run_directory, task)
         updated, outcome, halt = settle(
-            policy, bench, task.issue_number, outcome, None, acceptance_tests, supervisor, progress
+            policy,
+            bench,
+            task.issue_number,
+            outcome,
+            None,
+            acceptance_tests,
+            supervisor,
+            progress,
+            resources,
         )
         record_finished(policy, progress, updated)
         release_bench(policy, repo_key, bench)
@@ -572,6 +723,7 @@ def finish_interrupted_task(
             progress,
             deadline,
             observed_costs,
+            resources,
         )
     else:
         resumed = task.model_copy(update={"resumes": task.resumes + 1})
@@ -588,6 +740,7 @@ def finish_interrupted_task(
             progress,
             deadline,
             observed_costs,
+            resources,
         )
         updated, outcome, halt = settle(
             policy,
@@ -598,6 +751,7 @@ def finish_interrupted_task(
             acceptance_tests,
             supervisor,
             progress,
+            resources,
         )
     record_finished(policy, progress, updated)
     release_bench(policy, repo_key, bench)
@@ -659,6 +813,7 @@ def work_task(
     progress: RunProgress,
     deadline: datetime,
     observed_costs: list[float],
+    resources: RunResources,
 ) -> tuple[Task, Halt | None]:
     updated, outcome, halt = run_task(
         policy,
@@ -671,6 +826,7 @@ def work_task(
         progress,
         deadline,
         observed_costs,
+        resources,
     )
     record_finished(policy, progress, updated)
     return updated, halt if halt is not None else outcome_halt(outcome.outcome)
@@ -714,6 +870,37 @@ def failed_task_halt(
     return None
 
 
+def always() -> bool:
+    return True
+
+
+def hold_memory(
+    resources: RunResources,
+    supervisor: RunSupervisor,
+    progress: RunProgress,
+    holder: int,
+    kind: ReservationKind,
+    keep_waiting: Callable[[], bool],
+) -> bool:
+    issue_number = None if holder == BASELINE_HOLDER else holder
+
+    def note_wait() -> None:
+        supervisor.enter(ActivityKind.WAITING_FOR_MEMORY, issue_number, None, None)
+        append_event(
+            progress.run_directory, EventType.MEMORY_WAITED, MEMORY_WAIT_DETAILS[kind], issue_number
+        )
+
+    admitted = resources.admission.hold(holder, kind, keep_waiting, note_wait)
+    supervisor.leave(issue_number)
+    return admitted
+
+
+def start_refused(supervisor: RunSupervisor) -> Halt:
+    if supervisor.stop_requested():
+        return Halt(reason=StopReason.OPERATOR, detail=STOP_DETAIL)
+    return Halt(reason=StopReason.WINDOW_CLOSED, detail=DEADLINE_REASON)
+
+
 def guarded_work_task(
     policy: Policy,
     bench: TaskBench,
@@ -725,7 +912,14 @@ def guarded_work_task(
     progress: RunProgress,
     deadline: datetime,
     observed_costs: list[float],
+    resources: RunResources,
 ) -> tuple[Task, Halt | None]:
+    def may_start() -> bool:
+        return datetime.now(UTC) < deadline and not supervisor.stop_requested()
+
+    holder = task.issue_number
+    if not hold_memory(resources, supervisor, progress, holder, ReservationKind.WORKING, may_start):
+        return progress.task(holder), start_refused(supervisor)
     try:
         return work_task(
             policy,
@@ -738,10 +932,12 @@ def guarded_work_task(
             progress,
             deadline,
             observed_costs,
+            resources,
         )
     except TASK_FAILURES as error:
-        halt = failed_task_halt(policy, progress, supervisor, task.issue_number, error)
-        return progress.task(task.issue_number), halt
+        return progress.task(holder), failed_task_halt(policy, progress, supervisor, holder, error)
+    finally:
+        resources.admission.release(holder)
 
 
 def allowance_halt(
@@ -779,6 +975,7 @@ def work_in_turn(
     acceptance_tests: dict[int, Path],
     supervisor: RunSupervisor,
     deadline: datetime,
+    resources: RunResources,
 ) -> Halt | None:
     observed_costs: list[float] = []
     for task in queue:
@@ -800,6 +997,7 @@ def work_in_turn(
             progress,
             deadline,
             observed_costs,
+            resources,
         )
         if halt is not None:
             append_event(progress.run_directory, EventType.LIMIT_REACHED, halt.detail, None)
@@ -811,9 +1009,9 @@ def affordable_task_count(policy: Policy, spent_usd: float) -> int:
     return int((policy.budget.envelope_usd - spent_usd) // policy.budget.per_task_usd)
 
 
-def next_wave(policy: Policy, spent_usd: float, queue: list[Task]) -> Wave:
+def next_wave(policy: Policy, spent_usd: float, queue: list[Task], slots: int) -> Wave:
     wave = waves_of(queue, policy.worker.shared_paths)[0]
-    size = min(len(wave.tasks), policy.worker.parallel, affordable_task_count(policy, spent_usd))
+    size = min(len(wave.tasks), slots, affordable_task_count(policy, spent_usd))
     return wave.model_copy(update={"tasks": wave.tasks[:size]})
 
 
@@ -871,6 +1069,7 @@ def run_wave(
     supervisor: RunSupervisor,
     deadline: datetime,
     observed_costs: list[float],
+    resources: RunResources,
 ) -> Halt | None:
     tasks = [
         task.model_copy(update={"wave": number, "solo_reason": wave.solo_reason})
@@ -892,6 +1091,7 @@ def run_wave(
             supervisor,
             deadline,
             observed_costs,
+            resources,
         )
         note_overlaps(policy, progress, tasks)
     finally:
@@ -912,6 +1112,7 @@ def work_wave_tasks(
     supervisor: RunSupervisor,
     deadline: datetime,
     observed_costs: list[float],
+    resources: RunResources,
 ) -> list[Halt]:
     inbox = read_inbox(progress.run_directory.inbox)
     briefing = read_briefing(policy.state_dir, progress.state.repo_key)
@@ -932,6 +1133,7 @@ def work_wave_tasks(
                 progress,
                 deadline,
                 observed_costs,
+                resources,
             )
             for task, worktree_bench in zip(tasks, benches, strict=True)
         ]
@@ -948,6 +1150,7 @@ def work_in_waves(
     acceptance_tests: dict[int, Path],
     supervisor: RunSupervisor,
     deadline: datetime,
+    resources: RunResources,
 ) -> Halt | None:
     observed_costs: list[float] = []
     number = 0
@@ -958,7 +1161,8 @@ def work_in_waves(
         if halt is not None:
             return halt
         number += 1
-        wave = next_wave(policy, progress.state.spent_usd, queue)
+        slots = tasks_at_once(resources.admission.limits, policy.worker.parallel)
+        wave = next_wave(policy, progress.state.spent_usd, queue, slots)
         queue = queue[len(wave.tasks) :]
         halt = run_wave(
             policy,
@@ -972,6 +1176,7 @@ def work_in_waves(
             supervisor,
             deadline,
             observed_costs,
+            resources,
         )
         if halt is not None:
             return halt
@@ -988,16 +1193,34 @@ def work_through(
     acceptance_tests: dict[int, Path],
     supervisor: RunSupervisor,
     deadline: datetime,
+    resources: RunResources,
 ) -> RunState:
     capacity = max(policy.budget.max_tasks - worked_count(progress.state), 0)
     queue = approved[:capacity]
     if policy.worker.parallel > 1:
         halt = work_in_waves(
-            policy, bench, repo_key, queue, issues, progress, acceptance_tests, supervisor, deadline
+            policy,
+            bench,
+            repo_key,
+            queue,
+            issues,
+            progress,
+            acceptance_tests,
+            supervisor,
+            deadline,
+            resources,
         )
     else:
         halt = work_in_turn(
-            policy, bench, queue, issues, progress, acceptance_tests, supervisor, deadline
+            policy,
+            bench,
+            queue,
+            issues,
+            progress,
+            acceptance_tests,
+            supervisor,
+            deadline,
+            resources,
         )
     return close_execution(progress, halt, approved, capacity)
 

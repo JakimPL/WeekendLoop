@@ -184,6 +184,23 @@ worker resumes its own session and keeps everything it has done and read. The ru
 the reset falls after its deadline. The task in progress then keeps whatever passed the gate as an
 unfinished draft. The weekly limit, the seven-day ceiling and credit use still end the run.
 
+### Memory
+
+A run starts work only when there is memory for it. Before each task, and before each gate, it
+checks its pool (`resources.memory_pool_gb`, half the machine by default) and the memory the
+machine has free, and waits while either is short. A gate waiting to run goes before a new task,
+so finished work is checked first. `status` and `watch` show "waiting for memory" while it waits.
+
+Before the first task, the run checks the base branch with the repository's own setup and gate
+commands. When the base branch fails its own gate, every task would fail it too, so the run stops
+there, says which command failed, and spends nothing on workers.
+
+With a systemd user session, every worker and command runs in a scope capped at its share
+(`resources.task_memory_gb` or `resources.gate_memory_gb`). A task that outgrows its cap is
+stopped alone; your other programs and the run itself carry on. The digest's "Memory" section
+lists each gate's peak and any command stopped at its cap. Its processes are also the first the
+kernel picks if the machine as a whole runs out.
+
 ### Crash recovery
 
 A run survives its own process. Every step is saved to `run.json` before and after it runs. If the
@@ -257,8 +274,9 @@ systemctl --user enable --now weekend-loop-prepare-thu-2000.timer \
     weekend-loop-weekend-fri-2100.timer weekend-loop-weekend-sat-1000.timer
 ```
 
-The command writes `weekend-loop-weekend.service`, `weekend-loop-prepare.service` and one timer per
-entry under `schedule:`. It then prints these steps with the timer names from your schedule.
+The command writes `weekend-loop-weekend.service`, `weekend-loop-prepare.service`,
+`weekend-loop.slice` and one timer per entry under `schedule:`. It then prints these steps with the
+timer names from your schedule.
 
 The units record your workspace, the `weekend-loop` on your `PATH`, and a `PATH` built from the
 directories holding `claude`, `gh`, `git`, `uv` and the sandbox tools. Run the command from the
@@ -281,7 +299,9 @@ What to expect:
 - After a crash or kill, the weekend service restarts in 90 seconds, up to four times in six hours,
   and the run resumes from disk. A blocked run waits for its next timer.
 - A worker that runs out of memory ends alone, and the run carries on. Stopping the service ends
-  every process the run started.
+  every process the run started, including the capped scopes of its tasks.
+- Every service runs in `weekend-loop.slice`, which caps all the run's processes together at
+  `resources.memory_pool_gb`. Install it with the services.
 - Timers are persistent. A timer missed while the machine was off fires at the next boot. If a
   timer fires while a run is going, the run continues, so Saturday's timer catches up for
   Friday's.

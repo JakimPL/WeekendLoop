@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Final
 
 from weekend_loop.allowance import UNTIMED_FIVE_HOUR_LIMIT, await_allowance
+from weekend_loop.confinement import Step
 from weekend_loop.models import (
     ActivityKind,
     ClaudeOutcome,
@@ -22,6 +23,7 @@ from weekend_loop.models import (
     TaskStatus,
     WorkerOutcome,
 )
+from weekend_loop.run_resources import RunResources
 from weekend_loop.runs import RunProgress, append_event
 from weekend_loop.supervision import RunSupervisor
 from weekend_loop.workbench import (
@@ -108,19 +110,30 @@ def place_on_branch(bench: TaskBench, branch: str) -> None:
     create_task_branch(bench.workbench, branch, bench.git_settings)
 
 
-def prepare_tree(bench: TaskBench, branch: str) -> None:
+def prepare_tree(bench: TaskBench, branch: str, resources: RunResources, issue_number: int) -> None:
     place_on_branch(bench, branch)
-    results = run_setup_commands(bench.repo, bench.workbench, setup_environment())
+    with resources.admission.setup_door:
+        results = run_setup_commands(
+            bench.repo,
+            bench.workbench,
+            setup_environment(),
+            resources.confinement(issue_number, Step.SETUP),
+        )
     failed = [result for result in results if result.exit_code != 0]
     if failed:
         raise SetupFailedError(failed[0])
 
 
 def start_branch(
-    policy: Policy, bench: TaskBench, task: Task, issue: Issue, progress: RunProgress
+    policy: Policy,
+    bench: TaskBench,
+    task: Task,
+    issue: Issue,
+    progress: RunProgress,
+    resources: RunResources,
 ) -> Task:
     branch = branch_name(policy.worker.branch_prefix, issue.number, issue.title)
-    prepare_tree(bench, branch)
+    prepare_tree(bench, branch, resources, issue.number)
     started = task.model_copy(
         update={"status": TaskStatus.WORKING, "branch": branch, "session_id": str(uuid.uuid4())}
     )
@@ -138,6 +151,7 @@ def call_worker(
     resume: bool,
     supervisor: RunSupervisor,
     progress: RunProgress,
+    resources: RunResources,
 ) -> WorkerOutcome:
     transcript = supervisor.transcript_for(WORKER_TRANSCRIPT_ROLE, task.issue_number)
     supervisor.enter(ActivityKind.WORKING, task.issue_number, transcript, None)
@@ -156,6 +170,7 @@ def call_worker(
         call,
         supervisor,
         task.issue_number,
+        resources.confinement(task.issue_number, Step.WORKER),
     )
     supervisor.leave(task.issue_number)
     progress.put_task(
@@ -240,12 +255,23 @@ def work_on(
     progress: RunProgress,
     deadline: datetime,
     observed_costs: list[float],
+    resources: RunResources,
 ) -> tuple[WorkerOutcome, Halt | None]:
-    working = start_branch(policy, bench, task, issue, progress)
+    working = start_branch(policy, bench, task, issue, progress, resources)
     prompt = task_prompt(policy, bench, working, issue, guidance)
     write_task_record(progress, issue.number, prompt)
     return drive_worker(
-        policy, bench, working, issue, prompt, False, supervisor, progress, deadline, observed_costs
+        policy,
+        bench,
+        working,
+        issue,
+        prompt,
+        False,
+        supervisor,
+        progress,
+        deadline,
+        observed_costs,
+        resources,
     )
 
 
@@ -260,12 +286,15 @@ def drive_worker(
     progress: RunProgress,
     deadline: datetime,
     observed_costs: list[float],
+    resources: RunResources,
 ) -> tuple[WorkerOutcome, Halt | None]:
     working = task
     stall_resumes = 0
     fresh_used = False
     while True:
-        outcome = call_worker(policy, bench, prompt, working, resume, supervisor, progress)
+        outcome = call_worker(
+            policy, bench, prompt, working, resume, supervisor, progress, resources
+        )
         working = progress.task(issue.number)
         step = next_worker_step(outcome.outcome, stall_resumes, fresh_used)
         if step is WorkerStep.FINISH or working.worker_cost_usd >= policy.budget.per_task_usd:
@@ -278,7 +307,7 @@ def drive_worker(
                 return outcome, halt
         if step is WorkerStep.START_FRESH:
             fresh_used = True
-            working = start_branch(policy, bench, working, issue, progress)
+            working = start_branch(policy, bench, working, issue, progress, resources)
             resume = False
             continue
         stall_resumes += int(step is WorkerStep.RESUME)

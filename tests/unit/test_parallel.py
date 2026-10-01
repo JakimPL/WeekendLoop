@@ -26,6 +26,7 @@ from tests.unit.test_execute import (
     ISSUE_BODY,
     ISSUE_TITLE,
     RUN_ID,
+    amend_demo_repo,
     build_on_setup,
     build_origin,
     execute,
@@ -86,6 +87,18 @@ from pathlib import Path
 
 with (Path(__file__).resolve().parent / "setup-runs.txt").open("a") as log:
     log.write(os.getcwd() + "\\n")
+"""
+
+
+TIMED_GATE: Final[str] = """#!/usr/bin/env python3
+import time
+from pathlib import Path
+
+log = Path(__file__).resolve().parent / "gate-times.txt"
+started = time.monotonic()
+time.sleep(0.4)
+with log.open("a") as times:
+    times.write(f"{started} {time.monotonic()}\\n")
 """
 
 
@@ -229,9 +242,9 @@ def test_tasks_with_disjoint_paths_share_a_wave_each_on_its_own_worktree(
     assert run_git(["status", "--porcelain"], bench).strip() == ""
     branches = [task.branch for task in state.tasks if task.branch is not None]
     assert [branch_commits(policy, branch) for branch in branches] == [1, 1]
-    assert sorted(setup_runs(fake_binaries)) == sorted(
-        (worktrees / branch).resolve() for branch in branches
-    )
+    baseline, *tasks = setup_runs(fake_binaries)
+    assert baseline == bench.resolve()
+    assert sorted(tasks) == sorted((worktrees / branch).resolve() for branch in branches)
     ledger = (policy.state_dir / "ledger.jsonl").read_text().splitlines()
     assert sorted(json.loads(line)["issue_number"] for line in ledger) == [1, 2]
 
@@ -272,6 +285,27 @@ def test_a_task_whose_checkout_breaks_ends_alone_and_its_sibling_carries_on(
     ledger = (policy.state_dir / "ledger.jsonl").read_text().splitlines()
     assert sorted(json.loads(line)["issue_number"] for line in ledger) == [1, 2]
     assert not policy.workspace.worktrees_path(REPO_KEY).exists()
+
+
+def test_gates_of_tasks_working_side_by_side_take_turns(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare_parallel(
+        tmp_path, fake_binaries, {1: [RECORDS_PATH], 2: [README_PATH]}, 2, [], 3, 15.0
+    )
+    write_plans_by_issue(
+        fake_binaries, {1: {RECORDS_PATH: FIXED_RECORDS}, 2: {README_FILE: "# Logbook\n"}}
+    )
+    install_fake(fake_binaries, "timed-gate", TIMED_GATE)
+    amend_demo_repo(policy_path, {"gate_commands": ["timed-gate"]})
+    assert execute(policy_path) == 0
+    assert [task.status for task in latest(policy).tasks] == [TaskStatus.REVIEW] * 2
+    spans = sorted(
+        tuple(float(moment) for moment in line.split())
+        for line in (fake_binaries / "gate-times.txt").read_text().splitlines()
+    )
+    assert len(spans) == 3
+    assert all(earlier[1] <= later[0] for earlier, later in zip(spans, spans[1:], strict=False))
 
 
 def test_tasks_that_overlap_take_turns_in_separate_waves(

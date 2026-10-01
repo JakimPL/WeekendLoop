@@ -2,12 +2,18 @@ import shlex
 from pathlib import Path
 from typing import Final
 
-from weekend_loop.models import ScheduledCommand, ScheduledRun, SchedulePolicy
+from weekend_loop.admission import DEFAULT_MEMORY_POOL_SHARE
+from weekend_loop.confinement import TASKS_SLICE, memory_bytes
+from weekend_loop.models import ResourcesPolicy, ScheduledCommand, ScheduledRun, SchedulePolicy
 from weekend_loop.workspace import HOME_VARIABLE
 
 UNIT_PREFIX: Final[str] = "weekend-loop"
 SERVICE_SUFFIX: Final[str] = ".service"
 TIMER_SUFFIX: Final[str] = ".timer"
+SLICE_SUFFIX: Final[str] = ".slice"
+SLICE_NAME: Final[str] = f"weekend-loop{SLICE_SUFFIX}"
+SLICE_CPU_WEIGHT: Final[int] = 50
+PERCENT: Final[int] = 100
 CLI_NAME: Final[str] = "weekend-loop"
 ALERT_EXIT_COMMAND: Final[str] = "alert-exit"
 ENVIRONMENT_FILE: Final[str] = "run.env"
@@ -115,13 +121,34 @@ def render_service(
             ],
             "Service": [
                 "Type=exec",
+                f"Slice={SLICE_NAME}",
                 *environment,
                 f"ExecStart={command_line(start)}",
                 f"ExecStopPost=-{command_line(alert)}",
+                f"ExecStopPost=-{command_line(['systemctl', '--user', 'stop', TASKS_SLICE])}",
                 *restart_lines(command, blocked_exit_status),
                 "KillMode=control-group",
                 "OOMPolicy=continue",
                 f"TimeoutStopSec={STOP_TIMEOUT_SECONDS}",
+            ],
+        }
+    )
+
+
+def slice_memory_limit(resources: ResourcesPolicy) -> str:
+    if resources.memory_pool_gb is None:
+        return f"{round(DEFAULT_MEMORY_POOL_SHARE * PERCENT)}%"
+    return str(memory_bytes(resources.memory_pool_gb))
+
+
+def render_slice(resources: ResourcesPolicy) -> str:
+    return render_sections(
+        {
+            "Unit": ["Description=Weekend Loop: everything a run starts, within one memory pool"],
+            "Slice": [
+                f"MemoryMax={slice_memory_limit(resources)}",
+                "MemorySwapMax=0",
+                f"CPUWeight={SLICE_CPU_WEIGHT}",
             ],
         }
     )
@@ -149,6 +176,7 @@ def render_systemd_units(
     cli_binary: Path,
     path_variable: str,
     blocked_exit_status: int,
+    resources: ResourcesPolicy,
 ) -> dict[str, str]:
     invocation = [str(cli_binary), "--home", str(workspace_root)]
     environment = environment_lines(workspace_root, path_variable)
@@ -159,7 +187,7 @@ def render_systemd_units(
         for command in ScheduledCommand
     }
     timers = {timer_name(run): render_timer(run, schedule.timezone) for run in schedule.runs}
-    return {**services, **timers}
+    return {SLICE_NAME: render_slice(resources), **services, **timers}
 
 
 def install_step(output_directory: Path, user_unit_directory: Path) -> list[str]:
@@ -169,8 +197,8 @@ def install_step(output_directory: Path, user_unit_directory: Path) -> list[str]
     destination = shlex.quote(str(user_unit_directory))
     return [
         f"mkdir -p {destination}",
-        f"cp {source}/{UNIT_PREFIX}-*{SERVICE_SUFFIX} {source}/{UNIT_PREFIX}-*{TIMER_SUFFIX} "
-        f"{destination}/",
+        f"cp {source}/{SLICE_NAME} {source}/{UNIT_PREFIX}-*{SERVICE_SUFFIX} "
+        f"{source}/{UNIT_PREFIX}-*{TIMER_SUFFIX} {destination}/",
     ]
 
 

@@ -7,6 +7,7 @@ from tests.support.fakes import FAKE_SANDBOX_TOOL, install_fake
 from tests.unit.conftest import write_test_policy
 from weekend_loop.cli import EXIT_BLOCKED, EXIT_OK, main
 from weekend_loop.models import (
+    ResourcesPolicy,
     ScheduledCommand,
     ScheduledRun,
     SchedulePolicy,
@@ -43,7 +44,13 @@ def build_schedule() -> SchedulePolicy:
 
 def render(workspace_root: Path, cli_binary: Path) -> dict[str, str]:
     return render_systemd_units(
-        build_schedule(), "demo", workspace_root, cli_binary, PATH_VARIABLE, EXIT_BLOCKED
+        build_schedule(),
+        "demo",
+        workspace_root,
+        cli_binary,
+        PATH_VARIABLE,
+        EXIT_BLOCKED,
+        ResourcesPolicy(memory_pool_gb=24.0),
     )
 
 
@@ -104,6 +111,7 @@ def test_each_scheduled_run_gets_a_persistent_timer_in_the_schedule_timezone() -
         "weekend-loop-weekend-fri-2100.timer",
         "weekend-loop-weekend-sat-1005.timer",
         WEEKEND_SERVICE,
+        "weekend-loop.slice",
     ]
 
 
@@ -141,7 +149,7 @@ def test_the_systemd_command_writes_every_unit_and_prints_the_steps(
     assert code == EXIT_OK
     written = sorted(path.name for path in output_directory.iterdir())
     assert WEEKEND_SERVICE in written
-    assert len(written) == 5
+    assert len(written) == 6
     service = (output_directory / WEEKEND_SERVICE).read_text()
     invocation = f"{fake_binaries / 'weekend-loop'} --home {root}"
     assert f"ExecStart={invocation} weekend --repo-key demo" in service
@@ -165,3 +173,21 @@ def test_the_systemd_command_needs_uv_on_the_path(
 
     assert code == EXIT_BLOCKED
     assert not output_directory.exists()
+
+
+def test_every_service_runs_inside_one_memory_pool_and_stops_its_task_scopes() -> None:
+    units = render(WORKSPACE, CLI)
+    pool = directives(units["weekend-loop.slice"])
+    assert f"MemoryMax={24 * 1024**3}" in pool
+    assert "MemorySwapMax=0" in pool
+    for name in (WEEKEND_SERVICE, PREPARE_SERVICE):
+        service = directives(units[name])
+        assert "Slice=weekend-loop.slice" in service
+        assert "ExecStopPost=-systemctl --user stop weekend-loop-tasks.slice" in service
+
+
+def test_a_pool_left_to_the_default_takes_half_of_the_machine() -> None:
+    units = render_systemd_units(
+        build_schedule(), "demo", WORKSPACE, CLI, PATH_VARIABLE, EXIT_BLOCKED, ResourcesPolicy()
+    )
+    assert "MemoryMax=50%" in directives(units["weekend-loop.slice"])

@@ -13,6 +13,7 @@ from weekend_loop.commands import (
     command_environment,
     run_command,
 )
+from weekend_loop.confinement import Confinement
 from weekend_loop.models import Backend, CommandResult, IdentityPolicy, RepoTarget, Workspace
 
 GIT_BINARY: Final[str] = "git"
@@ -167,11 +168,13 @@ def setup_environment() -> dict[str, str]:
 
 
 def run_setup_commands(
-    repo: RepoTarget, workbench: Path, environment: dict[str, str]
+    repo: RepoTarget, workbench: Path, environment: dict[str, str], confinement: Confinement | None
 ) -> list[CommandResult]:
     results: list[CommandResult] = []
     for command in repo.setup_commands:
-        result = run_command(command, workbench, environment, DEFAULT_COMMAND_TIMEOUT_SECONDS)
+        result = run_command(
+            command, workbench, environment, DEFAULT_COMMAND_TIMEOUT_SECONDS, confinement
+        )
         results.append(result)
         if result.exit_code != 0:
             break

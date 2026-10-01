@@ -180,8 +180,67 @@ raise SystemExit(0)
 """
 
 
+FAKE_SYSTEMD_RUN = """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+here = Path(__file__).resolve().parent
+arguments = sys.argv[1:]
+with (here / "systemd-run-calls.jsonl").open("a") as log:
+    log.write(json.dumps(arguments) + "\\n")
+command = arguments[arguments.index("--") + 1 :]
+os.execvp(command[0], command)
+"""
+
+FAKE_SYSTEMCTL = """#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+here = Path(__file__).resolve().parent
+arguments = sys.argv[1:]
+with (here / "systemctl-calls.jsonl").open("a") as log:
+    log.write(json.dumps(arguments) + "\\n")
+if "show" in arguments and "Result" in arguments:
+    result = here / "systemctl-result.txt"
+    print(result.read_text().strip() if result.is_file() else "success")
+"""
+
+FAKE_CHOOM = """#!/usr/bin/env python3
+import os
+import sys
+
+arguments = sys.argv[1:]
+command = arguments[arguments.index("--") + 1 :]
+os.execvp(command[0], command)
+"""
+
+FAKE_TASKSET = """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+here = Path(__file__).resolve().parent
+arguments = sys.argv[1:]
+with (here / "taskset-calls.jsonl").open("a") as log:
+    log.write(json.dumps(arguments[:2]) + "\\n")
+command = arguments[2:]
+os.execvp(command[0], command)
+"""
+
+
 def install_fake(directory: Path, name: str, script: str) -> Path:
     path = directory / name
     path.write_text(script)
     path.chmod(0o755)
     return path
+
+
+def install_confinement_fakes(directory: Path) -> None:
+    install_fake(directory, "systemd-run", FAKE_SYSTEMD_RUN)
+    install_fake(directory, "systemctl", FAKE_SYSTEMCTL)
+    install_fake(directory, "choom", FAKE_CHOOM)
+    install_fake(directory, "taskset", FAKE_TASKSET)

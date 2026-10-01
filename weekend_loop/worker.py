@@ -6,6 +6,7 @@ from typing import Final
 from pydantic import ValidationError
 
 from weekend_loop.claude_cli import CallWatch, ClaudeInvocation, run_claude
+from weekend_loop.confinement import Confinement
 from weekend_loop.models import (
     Assessment,
     ClaudeOutcome,
@@ -109,7 +110,12 @@ def render_task(
 
 
 def worker_invocation(
-    policy: Policy, prompts: WorkerPrompts, prompt: str, workbench: Path, call: WorkerCall
+    policy: Policy,
+    prompts: WorkerPrompts,
+    prompt: str,
+    workbench: Path,
+    call: WorkerCall,
+    confinement: Confinement | None,
 ) -> ClaudeInvocation:
     return ClaudeInvocation(
         prompt=prompt,
@@ -131,6 +137,7 @@ def worker_invocation(
         persist_session=True,
         transcript_path=call.transcript,
         idle_seconds=policy.worker.idle_minutes * SECONDS_PER_MINUTE,
+        confinement=confinement,
     )
 
 
@@ -165,10 +172,11 @@ def run_worker(
     call: WorkerCall,
     watch: CallWatch,
     issue_number: int,
+    confinement: Confinement | None,
 ) -> WorkerOutcome:
     result = run_claude(
         worker_invocation(
-            policy, prompts, RESUME_PROMPT if call.resume else prompt, workbench, call
+            policy, prompts, RESUME_PROMPT if call.resume else prompt, workbench, call, confinement
         ),
         environment,
         watch,

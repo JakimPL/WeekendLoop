@@ -193,7 +193,9 @@ def command_labels(options: argparse.Namespace) -> int:
         if options.dry_run:
             print(" ".join(arguments))
             continue
-        run_command(shlex.join(arguments), Path.cwd(), environment, DEFAULT_COMMAND_TIMEOUT_SECONDS)
+        run_command(
+            shlex.join(arguments), Path.cwd(), environment, DEFAULT_COMMAND_TIMEOUT_SECONDS, None
+        )
         print(f"wrote {arguments[3]}")
     return EXIT_OK
 
@@ -275,6 +277,7 @@ def command_systemd(options: argparse.Namespace) -> int:
         cli_binary(),
         unit_path_variable(list(binaries.values())),
         EXIT_BLOCKED,
+        policy.resources,
     )
     for path in write_units(options.output_dir, units):
         print(f"wrote {path}")

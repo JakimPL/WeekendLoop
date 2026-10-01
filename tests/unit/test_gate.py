@@ -91,6 +91,7 @@ def test_gate_commands_stop_at_the_first_failure(tmp_path: Path) -> None:
         ["bad.py"],
         tmp_path,
         command_environment({}),
+        None,
     )
     assert len(results) == 1
     assert results[0].exit_code != 0

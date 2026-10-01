@@ -8,6 +8,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final
 
+from weekend_loop.admission import (
+    MemoryReading,
+    admission_limits,
+    caps_exceeding_the_pool,
+    read_memory,
+    tasks_at_once,
+)
 from weekend_loop.board import local_repository_path, open_board
 from weekend_loop.claude_cli import (
     SETPRIV_BINARY,
@@ -16,6 +23,7 @@ from weekend_loop.claude_cli import (
     agent_environment,
     read_oauth_token,
 )
+from weekend_loop.confinement import CHOOM_BINARY, TASKSET_BINARY, scopes_available
 from weekend_loop.github import CONFIG_DIRECTORY_NAME, GH_BINARY, GitHubReader, read_token
 from weekend_loop.limits import (
     NO_READING_REASON,
@@ -88,6 +96,21 @@ SOCKET_FILTER_PACKAGE: Final[Path] = Path("@anthropic-ai") / "sandbox-runtime"
 SOCKET_FILTER_FIX: Final[str] = (
     "sandboxed commands can open Unix sockets outside the masked runtime directory; install the "
     "filter with `npm install -g @anthropic-ai/sandbox-runtime`"
+)
+MEMORY_POOL_TEMPLATE: Final[str] = (
+    "pool {pool:.1f} GB of {total:.0f} GB; {tasks} {task_noun} at once ({task:.0f} GB each), "
+    "{gates} {gate_noun} at a time ({gate:.0f} GB each)"
+)
+MEMORY_CAPS_TOO_LARGE_TEMPLATE: Final[str] = (
+    "{caps} exceed the {pool:.1f} GB pool; raise resources.memory_pool_gb or lower the caps"
+)
+FEWER_TASKS_TEMPLATE: Final[str] = (
+    "{detail}; worker.parallel asks for {parallel}, so the run starts at most {tasks}"
+)
+SCOPES_PASSED_DETAIL: Final[str] = "systemd caps the memory of every task and gate"
+SCOPES_FAILED_DETAIL: Final[str] = (
+    "systemd-run --user cannot start a scope here; the run waits for free memory, but nothing "
+    "caps a task that grows past its share"
 )
 SANDBOX_FIX: Final[str] = (
     "the worker's shell commands fail until bwrap may create user namespaces; allow them for "
@@ -265,6 +288,45 @@ def check_socket_filter(node_modules: Path | None, required: bool) -> PreflightC
     return failed(name, required, f"{package} is missing; {SOCKET_FILTER_FIX}")
 
 
+def plural(count: int, noun: str) -> str:
+    return noun if count == 1 else f"{noun}s"
+
+
+def check_memory_pool(policy: Policy, reading: MemoryReading) -> PreflightCheck:
+    name = "memory"
+    limits = admission_limits(policy.resources, reading)
+    too_large = caps_exceeding_the_pool(limits)
+    if too_large:
+        detail = MEMORY_CAPS_TOO_LARGE_TEMPLATE.format(
+            caps=" and ".join(too_large), pool=limits.pool_gb
+        )
+        return failed(name, True, detail)
+    tasks = tasks_at_once(limits, policy.worker.parallel)
+    detail = MEMORY_POOL_TEMPLATE.format(
+        pool=limits.pool_gb,
+        total=reading.total_gb,
+        tasks=tasks,
+        task_noun=plural(tasks, "task"),
+        task=limits.task_memory_gb,
+        gates=limits.gates_at_once,
+        gate_noun=plural(limits.gates_at_once, "gate"),
+        gate=limits.gate_memory_gb,
+    )
+    if tasks < policy.worker.parallel:
+        fewer = FEWER_TASKS_TEMPLATE.format(
+            detail=detail, parallel=policy.worker.parallel, tasks=tasks
+        )
+        return failed(name, False, fewer)
+    return passed(name, True, detail)
+
+
+def check_memory_caps(available: bool) -> PreflightCheck:
+    name = "memory caps"
+    if available:
+        return passed(name, False, SCOPES_PASSED_DETAIL)
+    return failed(name, False, SCOPES_FAILED_DETAIL)
+
+
 def check_state_directory(state_directory: Path) -> PreflightCheck:
     name = "state directory"
     state_directory.mkdir(parents=True, exist_ok=True)
@@ -392,6 +454,14 @@ def run_preflight(
         *[check_binary(f"sandbox {binary}", binary, writes) for binary in SANDBOX_BINARIES],
         check_sandbox_starts(False),
         check_socket_filter(global_node_modules(), False),
+        check_binary("choom", CHOOM_BINARY, writes),
+        *(
+            [check_binary("taskset", TASKSET_BINARY, writes)]
+            if policy.resources.cpus_per_task is not None
+            else []
+        ),
+        check_memory_pool(policy, read_memory()),
+        check_memory_caps(scopes_available()),
         check_operator_identity(policy.identity),
         check_weekly_reset(policy.budget, now),
         check_usage_headroom(reading, policy.usage, now),

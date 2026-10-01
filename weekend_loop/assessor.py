@@ -121,6 +121,7 @@ def assessor_invocation(
         persist_session=False,
         transcript_path=transcript,
         idle_seconds=policy.worker.idle_minutes * SECONDS_PER_MINUTE,
+        confinement=None,
     )
 
 

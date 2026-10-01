@@ -106,7 +106,7 @@ def test_a_policy_command_reads_nothing_from_the_orchestrator_input(
     tmp_path: Path, piped_stdin: None
 ) -> None:
     result = run_command(
-        "readlink /proc/self/fd/0", tmp_path, {"PATH": SYSTEM_PATH}, COMMAND_TIMEOUT_SECONDS
+        "readlink /proc/self/fd/0", tmp_path, {"PATH": SYSTEM_PATH}, COMMAND_TIMEOUT_SECONDS, None
     )
 
     assert result.output_tail == DEVICE_NULL

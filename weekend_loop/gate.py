@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Final
 
 from weekend_loop.commands import DEFAULT_COMMAND_TIMEOUT_SECONDS, run_command
+from weekend_loop.confinement import Confinement
 from weekend_loop.models import ChangedFile, CommandResult, GateResult
 
 SECRET_PATTERNS: Final[dict[str, re.Pattern[str]]] = {
@@ -91,13 +92,16 @@ def run_gate_commands(
     python_files: list[str],
     workbench: Path,
     environment: dict[str, str],
+    confinement: Confinement | None,
 ) -> list[CommandResult]:
     results: list[CommandResult] = []
     for command in commands:
         rendered = render_command(command, python_files)
         if rendered is None:
             continue
-        result = run_command(rendered, workbench, environment, DEFAULT_COMMAND_TIMEOUT_SECONDS)
+        result = run_command(
+            rendered, workbench, environment, DEFAULT_COMMAND_TIMEOUT_SECONDS, confinement
+        )
         results.append(result)
         if result.exit_code != 0:
             break

@@ -4,6 +4,7 @@ from typing import Final
 
 from weekend_loop.limits import render_usage
 from weekend_loop.models import (
+    CommandResult,
     Confidence,
     Effort,
     RunState,
@@ -261,6 +262,32 @@ def render_merge_care_section(state: RunState) -> list[str]:
     return ["## Merge with care", "", *lines, ""]
 
 
+def highest_peak(commands: list[CommandResult]) -> float | None:
+    peaks = [command.peak_memory_gb for command in commands if command.peak_memory_gb is not None]
+    return max(peaks) if peaks else None
+
+
+def memory_line(subject: str, commands: list[CommandResult]) -> str | None:
+    peak = highest_peak(commands)
+    capped = [command.command for command in commands if command.stopped_at_memory_cap]
+    if peak is None and not capped:
+        return None
+    parts = [f"gate peak {peak:.1f} GB"] if peak is not None else []
+    parts.extend(f"`{command}` stopped at its memory cap" for command in capped)
+    return f"- {subject}: {'; '.join(parts)}"
+
+
+def render_memory_section(state: RunState) -> list[str]:
+    subjects = [("the base branch", state.baseline.commands)] if state.baseline is not None else []
+    subjects.extend(
+        (f"#{task.issue_number}", task.gate.commands)
+        for task in state.tasks
+        if task.gate is not None
+    )
+    lines = [line for subject, commands in subjects if (line := memory_line(subject, commands))]
+    return ["## Memory", "", *lines, ""] if lines else []
+
+
 def render_waves_section(state: RunState) -> list[str]:
     waves = waves_of_run(state)
     if not waves:
@@ -304,5 +331,6 @@ def render_digest(state: RunState, repo_slug: str) -> str:
             "",
             *render_merge_care_section(state),
             *render_waves_section(state),
+            *render_memory_section(state),
         ]
     )

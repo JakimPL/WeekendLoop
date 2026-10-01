@@ -8,7 +8,12 @@ from typing import Any
 import pytest
 import yaml
 
-from tests.support.fakes import FAKE_CLAUDE, FAKE_SANDBOX_TOOL, install_fake
+from tests.support.fakes import (
+    FAKE_CLAUDE,
+    FAKE_SANDBOX_TOOL,
+    install_confinement_fakes,
+    install_fake,
+)
 from weekend_loop.cli import EXIT_OK, main
 from weekend_loop.models import Workspace
 
@@ -92,6 +97,7 @@ def binaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     directory.mkdir()
     install_fake(directory, "claude", FAKE_CLAUDE)
     install_fake(directory, "socat", FAKE_SANDBOX_TOOL)
+    install_confinement_fakes(directory)
     install_fake(directory, "bwrap", FAKE_SANDBOX_TOOL)
     monkeypatch.setenv("PATH", f"{directory}:/usr/bin:/bin")
     write_assistant_plans(directory)

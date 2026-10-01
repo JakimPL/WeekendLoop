@@ -81,6 +81,10 @@ marker = Path.cwd() / "{GENERATED_MARKER}"
 marker.parent.mkdir(parents=True, exist_ok=True)
 marker.write_text("built by setup")
 """
+FIXED_ON_DISK_CHECK = (
+    'python3 -c "import pathlib, sys; '
+    "sys.exit(0 if 'strip()' in pathlib.Path('logbook/records.py').read_text() else 1)\""
+)
 GENERATED_CHECK = (
     'python3 -c "import pathlib, sys; '
     f"sys.exit(0 if pathlib.Path('{GENERATED_MARKER}').is_file() else 1)\""
@@ -320,6 +324,7 @@ def test_the_attempt_leaves_a_complete_record_and_a_ledger_line(
         json.loads(line)["event"] for line in run_directory.events_path.read_text().splitlines()
     ]
     assert events == [
+        "baseline_finished",
         "task_started",
         "worker_finished",
         "gate_finished",
@@ -346,6 +351,66 @@ def test_what_setup_builds_on_the_task_branch_reaches_the_gate(
     assert [task.status for task in state.tasks] == [TaskStatus.REVIEW]
     gate = state.tasks[0].gate
     assert gate is not None and GENERATED_MARKER not in gate.changed_paths
+
+
+def worker_call_count(fake_binaries: Path) -> int:
+    log = fake_binaries / "claude-calls.jsonl"
+    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.is_file() else []
+    return sum(1 for call in calls if "acceptEdits" in call)
+
+
+def scope_calls(fake_binaries: Path) -> list[list[str]]:
+    calls = (fake_binaries / "systemd-run-calls.jsonl").read_text().splitlines()
+    return [json.loads(line) for line in calls]
+
+
+def test_a_base_branch_that_fails_its_own_gate_stops_the_run_before_any_worker(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare(
+        tmp_path,
+        fake_binaries,
+        ["weekend:auto"],
+        {"logbook/records.py": FIXED_RECORDS},
+        delivery_payload("done", "fix(records): treat an empty speed as unknown", []),
+        3,
+        [1],
+    )
+    amend_demo_repo(policy_path, {"gate_commands": [FIXED_ON_DISK_CHECK]})
+    assert execute(policy_path) == 0
+    state = load_run_state(open_run_directory(policy.state_dir, RUN_ID))
+    assert state.stop_reason is StopReason.BASELINE_FAILED
+    assert state.baseline is not None and not state.baseline.passed
+    assert [task.status for task in state.tasks] == [TaskStatus.ASSESSED]
+    assert worker_call_count(fake_binaries) == 0
+
+
+def test_every_command_of_a_task_runs_in_a_scope_sized_for_its_step(
+    tmp_path: Path, fake_binaries: Path
+) -> None:
+    policy, policy_path = prepare(
+        tmp_path,
+        fake_binaries,
+        ["weekend:auto"],
+        {"logbook/records.py": FIXED_RECORDS},
+        delivery_payload("done", "fix(records): treat an empty speed as unknown", []),
+        3,
+        [1],
+    )
+    amend_demo_repo(policy_path, {"setup_commands": ["true"]})
+    assert execute(policy_path) == 0
+    scopes = {
+        next(argument for argument in call if argument.startswith("--unit=")): call
+        for call in scope_calls(fake_binaries)
+        if any(argument.startswith("--unit=wl-") for argument in call)
+    }
+    steps = {unit.split("-")[-2]: call for unit, call in scopes.items()}
+    resources = policy.resources
+    assert f"MemoryMax={int(resources.task_memory_gb * 1024**3)}" in steps["worker"]
+    assert "OOMPolicy=continue" in steps["worker"]
+    assert f"MemoryMax={int(resources.gate_memory_gb * 1024**3)}" in steps["gate"]
+    assert "OOMPolicy=kill" in steps["gate"]
+    assert {"setup", "worker", "gate", "acceptance"} <= set(steps)
 
 
 def test_a_forbidden_path_fails_the_gate_and_the_branch_is_not_offered(
