@@ -16,11 +16,14 @@ from tests.support.fakes import (
 )
 from tests.unit.conftest import base_policy, issue_payload, write_github_data, write_policy
 from weekend_loop.backends import BoardReader, BoardWriter, reader_for, writer_for
-from weekend_loop.demo.board import board_issue
-from weekend_loop.demo.seed import SeedIssue
-from weekend_loop.labels import board_labels
+from weekend_loop.demo.playground import git
+from weekend_loop.demo.seed import SeedIssue, create_issue
+from weekend_loop.github import reader_for as github_reader_for
+from weekend_loop.labels import create_labels, label_commands
 from weekend_loop.local_github.paths import board_root
-from weekend_loop.local_github.store import create_board, open_board, write_account
+from weekend_loop.local_github.repository import initialise_bare
+from weekend_loop.local_github.store import create_board, write_account
+from weekend_loop.local_github.wrapper import install_wrapper
 from weekend_loop.models import Backend, BoardAccount, Policy, RepoTarget
 from weekend_loop.policy import policy_at, repo_target
 
@@ -29,6 +32,7 @@ REPO_KEY = "demo"
 OPERATOR = "example-operator"
 ISSUE_TITLE = "Empty speed field"
 ISSUE_BODY = "## Business requirement\nThe parser crashes on an empty field.\n"
+BRANCH = "weekend/1-empty-speed-field"
 
 
 @dataclass(frozen=True)
@@ -48,7 +52,8 @@ class BoardFixture:
 
     def labels_of(self, issue_number: int) -> list[str]:
         if self.backend is Backend.LOCAL:
-            return open_board(self.policy.state_dir, self.repo.slug).read_issue(issue_number).labels
+            issues = self.reader.open_issues(100)
+            return next(issue.labels for issue in issues if issue.number == issue_number)
         written = [call for call in self.calls() if call[:2] == ["issue", "edit"]]
         added: list[str] = []
         for call in written:
@@ -84,13 +89,29 @@ def seed_issue(number: int) -> SeedIssue:
     )
 
 
-def build_local(policy: Policy, repo: RepoTarget, numbers: list[int]) -> None:
-    write_account(board_root(policy.state_dir), BoardAccount(login=OPERATOR))
-    board = create_board(board_root(policy.state_dir), repo.slug, True)
-    board.write_index(board.read_index().model_copy(update={"labels": board_labels(policy.labels)}))
+def push_branch(repository: Path, checkout: Path, base_branch: str) -> None:
+    checkout.mkdir()
+    git(["init", "--initial-branch", base_branch], cwd=checkout)
+    (checkout / "parser.py").write_text("SPEED = 0\n")
+    git(["add", "--all"], cwd=checkout)
+    git(["commit", "--message", "Added: the parser"], cwd=checkout)
+    git(["checkout", "-b", BRANCH], cwd=checkout)
+    (checkout / "parser.py").write_text("SPEED = None\n")
+    git(["commit", "--all", "--message", "Fixed: an empty speed field"], cwd=checkout)
+    git(["push", str(repository), base_branch, BRANCH], cwd=checkout)
+
+
+def build_local(policy: Policy, repo: RepoTarget, numbers: list[int], checkout: Path) -> None:
+    root = board_root(policy.state_dir)
+    write_account(root, BoardAccount(login=OPERATOR))
+    board = create_board(root, repo.slug, True)
+    initialise_bare(board.repository_path, repo.base_branch)
+    push_branch(board.repository_path, checkout, repo.base_branch)
+    install_wrapper(policy.state_dir)
+    commands = github_reader_for(repo, policy.state_dir)
+    assert create_labels(commands, label_commands(policy, repo)) is None
     for number in numbers:
-        board.take_number()
-        board.write_issue(board_issue(seed_issue(number), number))
+        assert create_issue(commands, repo.slug, seed_issue(number)) == number
 
 
 def build_github(binaries: Path, numbers: list[int]) -> None:
@@ -122,7 +143,7 @@ def board(request: pytest.FixtureRequest, tmp_path: Path, fake_binaries: Path) -
     repo = repo_target(policy, REPO_KEY)
     numbers = [1]
     if backend is Backend.LOCAL:
-        build_local(policy, repo, numbers)
+        build_local(policy, repo, numbers, tmp_path / "checkout")
     else:
         build_github(fake_binaries, numbers)
     return BoardFixture(

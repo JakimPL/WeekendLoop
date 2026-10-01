@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import html
 from typing import Final
+from urllib.parse import urlsplit
 
+from weekend_loop.local_github.paths import UNREACHABLE_HOST_SUFFIX
 from weekend_loop.models import TaskStatus
 from weekend_loop.status import Liveness
 
@@ -122,5 +124,15 @@ body {{ margin: 0; padding: 24px; background: {PAGE}; }}
 </style>"""
 
 
+LINKABLE_SCHEMES: Final[tuple[str, ...]] = ("https://", "http://")
+
+
 def escape(text: str) -> str:
     return html.escape(text, quote=True)
+
+
+def browsable(url: str | None) -> str | None:
+    if url is None or not url.startswith(LINKABLE_SCHEMES):
+        return None
+    host = urlsplit(url).hostname or ""
+    return None if host.endswith(UNREACHABLE_HOST_SUFFIX) else url

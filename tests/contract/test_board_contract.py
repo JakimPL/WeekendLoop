@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from tests.contract.conftest import ISSUE_TITLE, BoardFixture
+from tests.contract.conftest import BRANCH, ISSUE_TITLE, BoardFixture
 
-# The GitHub half runs against a fake `gh`: it pins the call shape and the parsing, not GitHub's
-# own behaviour. What it proves is that both backends keep the same contract.
+# Both halves run the GitHub board code. The local half reaches the local gh, which keeps a board
+# on disk; the github half reaches a canned fake gh, which pins the call shapes and the parsing.
 
 ISSUE_NUMBER = 1
 COMMENT = "A question from the agent."
-BRANCH = "weekend/1-empty-speed-field"
 
 
 def test_an_open_issue_comes_back_with_its_title_and_labels(board: BoardFixture) -> None:

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from tests.unit.conftest import base_policy, write_policy
-from weekend_loop.demo.board import git
+from weekend_loop.demo.playground import git
 from weekend_loop.demo.publish import (
     OPERATOR_ACTION_EXIT_CODE,
     OperatorActionRequiredError,
@@ -71,11 +71,21 @@ def test_the_missing_workflow_permission_is_recognised() -> None:
 def test_an_empty_repository_receives_the_mockup_once(tmp_path: Path) -> None:
     remote = empty_remote(tmp_path)
     context = context_for(tmp_path, str(remote))
-    assert "pushed" in publish_playground(context)
+    assert publish_playground(context).startswith("pushed main, feat/dark-mode")
     tracked = git(["ls-tree", "-r", "--name-only", "main"], cwd=remote).splitlines()
     assert "pocketchat/chat.py" in tracked
     assert ".venv" not in {path.split("/")[0] for path in tracked}
-    assert "already carries main" in publish_playground(context)
+    overlap = git(["diff", "--name-only", "main", "feat/dark-mode"], cwd=remote).split()
+    assert overlap == ["pocketchat/static/dark-mode.css"]
+    assert "already carries the mockup" in publish_playground(context)
+
+
+def test_a_missing_colleague_branch_is_pushed_on_its_own(tmp_path: Path) -> None:
+    remote = empty_remote(tmp_path)
+    context = context_for(tmp_path, str(remote))
+    publish_playground(context)
+    git(["branch", "-D", "feat/dark-mode"], cwd=remote)
+    assert publish_playground(context).startswith("pushed feat/dark-mode")
 
 
 def test_a_missing_token_asks_the_operator_for_one(tmp_path: Path) -> None:

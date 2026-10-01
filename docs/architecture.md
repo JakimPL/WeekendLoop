@@ -39,10 +39,9 @@ weekend_loop/policy.py      loads config.yaml and anchors its paths
 weekend_loop/records.py     atomic JSON records and append-only ledgers
 weekend_loop/cli.py         preflight | candidates | triage | agreement
 weekend_loop/preflight.py   the checks a run must clear: binaries, credentials, fences, reset time
-weekend_loop/github.py      the only module that talks to GitHub; reads issues, comments, pull requests
-weekend_loop/board.py       the local board on disk: issues, comments, pull requests as JSON
-weekend_loop/local_board.py the reader and writer over a local board, standing in for GitHub
-weekend_loop/backends.py    the reader and writer contracts, and the factory that picks a backend
+weekend_loop/github.py      the only module that talks to a board, always through `gh`
+weekend_loop/local_github/  a `gh` that keeps a GitHub-shaped board on disk, for the `local` backend
+weekend_loop/backends.py    the reader and writer contracts the phases depend on
 weekend_loop/prefilter.py   eligibility rules and spec signals, as pure functions
 weekend_loop/workbench.py   the checkout the assessor reads, cloned once and reset per run
 weekend_loop/claude_cli.py  builds, runs and classifies every `claude -p` invocation

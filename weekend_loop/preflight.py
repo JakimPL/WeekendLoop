@@ -31,8 +31,7 @@ from weekend_loop.limits import (
     read_usage,
     seven_day_decision,
 )
-from weekend_loop.local_github.paths import local_repository_path
-from weekend_loop.local_github.store import open_board
+from weekend_loop.local_github.wrapper import is_local_board_wrapper
 from weekend_loop.models import (
     Backend,
     BudgetPolicy,
@@ -66,6 +65,14 @@ CONTENTS_LEVELS: Final[dict[RepoMode, str]] = {
     RepoMode.DRY_RUN: "Read-only",
     RepoMode.EXECUTE: "Read and write",
 }
+GH_CHECK: Final[str] = "gh"
+MISSING_BINARY_DETAIL: Final[str] = "{binary} is not on PATH"
+LOCAL_BOARD_MISSING_DETAIL: Final[str] = (
+    "no local board for {slug}; `weekend-loop demo up` builds it"
+)
+LOCAL_GH_ON_PATH_DETAIL: Final[str] = (
+    "the gh on PATH is a local board's; take {directory} off PATH for a GitHub run"
+)
 REFUSED_TOKEN_DETAIL: Final[str] = (
     "GitHub refused the token (HTTP 401): it is revoked or expired; save a new one to {path}"
 )
@@ -142,7 +149,7 @@ def failed(name: str, required: bool, detail: str) -> PreflightCheck:
 def check_binary(name: str, binary: str, required: bool) -> PreflightCheck:
     location = shutil.which(binary)
     if location is None:
-        return failed(name, required, f"{binary} is not on PATH")
+        return failed(name, required, MISSING_BINARY_DETAIL.format(binary=binary))
     completed = subprocess.run(
         [binary, "--version"],
         stdin=subprocess.DEVNULL,
@@ -348,25 +355,19 @@ def check_state_directory(state_directory: Path) -> PreflightCheck:
     return passed(name, True, str(state_directory))
 
 
-def check_local_board(repo: RepoTarget, state_directory: Path) -> PreflightCheck:
-    name = f"local board for {repo.slug}"
-    board = open_board(state_directory, repo.slug)
-    if not board.exists():
-        return failed(name, True, f"no board at {board.directory}; seed it first")
-    repository = local_repository_path(state_directory, repo.slug)
-    if not (repository / "HEAD").is_file():
-        return failed(name, True, f"no repository at {repository}; seed it first")
-    return passed(name, True, f"{len(board.open_issues())} open issues at {board.directory}")
-
-
 def check_repository_access(repo: RepoTarget, state_directory: Path) -> PreflightCheck:
     name = REPOSITORY_ACCESS_CHECK_TEMPLATE.format(slug=repo.slug)
     try:
         reader = reader_for(repo, state_directory)
     except (FileNotFoundError, ValueError) as error:
         return failed(name, True, str(error))
+    missing = missing_cli_detail(repo, reader.binary)
+    if missing is not None:
+        return failed(name, True, missing)
     status = write_probe_status(reader, repo.slug)
     writable = probe_outcome(status)
+    if writable is None and repo.backend is Backend.LOCAL and status == HIDDEN_STATUS:
+        return failed(name, True, LOCAL_BOARD_MISSING_DETAIL.format(slug=repo.slug))
     if writable is None:
         read_status = read_probe_status(reader, repo.slug) if status == HIDDEN_STATUS else None
         return failed(name, True, unreachable_detail(repo, status, read_status))
@@ -440,6 +441,9 @@ def check_issue_dependencies(repo: RepoTarget, state_directory: Path) -> Preflig
         reader = reader_for(repo, state_directory)
     except (FileNotFoundError, ValueError) as error:
         return failed(name, True, str(error))
+    missing = missing_cli_detail(repo, reader.binary)
+    if missing is not None:
+        return failed(name, True, missing)
     try:
         blockers = reader.open_blockers()
     except subprocess.CalledProcessError as error:
@@ -450,21 +454,39 @@ def check_issue_dependencies(repo: RepoTarget, state_directory: Path) -> Preflig
     return passed(name, True, DEPENDENCIES_READ_TEMPLATE.format(count=linked))
 
 
+def missing_cli_detail(repo: RepoTarget, binary: str) -> str | None:
+    if shutil.which(binary) is not None:
+        return None
+    if repo.backend is Backend.LOCAL:
+        return LOCAL_BOARD_MISSING_DETAIL.format(slug=repo.slug)
+    return MISSING_BINARY_DETAIL.format(binary=binary)
+
+
+def check_github_cli(repo: RepoTarget, state_directory: Path) -> PreflightCheck:
+    binary = gh_binary(repo, state_directory)
+    location = shutil.which(binary)
+    missing = missing_cli_detail(repo, binary)
+    if missing is not None:
+        return failed(GH_CHECK, True, missing)
+    if (
+        location is not None
+        and repo.backend is Backend.GITHUB
+        and is_local_board_wrapper(Path(location))
+    ):
+        directory = Path(location).parent
+        return failed(GH_CHECK, True, LOCAL_GH_ON_PATH_DETAIL.format(directory=directory))
+    return check_binary(GH_CHECK, binary, True)
+
+
 def github_checks(repo: RepoTarget, repo_key: str, state_directory: Path) -> list[PreflightCheck]:
     return [
-        check_binary("gh", gh_binary(repo, state_directory), True),
+        check_github_cli(repo, state_directory),
         check_secret_file(
             GITHUB_TOKEN_CHECK_TEMPLATE.format(repo_key=repo_key), repo.token_path(), True
         ),
         check_repository_access(repo, state_directory),
         check_issue_dependencies(repo, state_directory),
     ]
-
-
-def backend_checks(repo: RepoTarget, repo_key: str, state_directory: Path) -> list[PreflightCheck]:
-    if repo.backend is Backend.LOCAL:
-        return [check_local_board(repo, state_directory)]
-    return github_checks(repo, repo_key, state_directory)
 
 
 def run_preflight(
@@ -499,7 +521,7 @@ def run_preflight(
         check_weekly_reset(policy.budget, now),
         check_usage_headroom(reading, policy.usage, now),
         check_usage_credits(reading, True),
-        *backend_checks(repo, repo_key, policy.state_dir),
+        *github_checks(repo, repo_key, policy.state_dir),
     ]
     return PreflightReport(repo_key=repo_key, mode=repo.mode, checked_at=now, checks=checks)
 

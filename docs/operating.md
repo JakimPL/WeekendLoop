@@ -138,7 +138,8 @@ Transcripts are in the run directory:
 
 A call that stays silent for `worker.idle_minutes` is ended as stalled. Stopping a call, or losing
 the orchestrator, ends every process the call started. `git` and `gh` calls end after ten and two
-minutes. If a call times out, the run ends, and under systemd it starts again. Every `git`, `gh`
+minutes. If a call times out, the run ends, and under systemd it starts again. A `gh` call that
+sends a body (a comment, an issue, a pull request) reads it from its input; every other `git`, `gh`
 and repository command, and every `claude` call, reads its input from `/dev/null`.
 
 ### The weekend window

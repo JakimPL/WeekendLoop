@@ -29,11 +29,9 @@ from weekend_loop.labels import (
     LABEL_NAME_POSITION,
     create_labels,
     label_commands,
-    sync_local_labels,
 )
 from weekend_loop.lock import RunLockHeldError, run_lock
 from weekend_loop.models import (
-    Backend,
     Policy,
     RepoMode,
     RepoTarget,
@@ -193,10 +191,6 @@ def command_demo(options: argparse.Namespace) -> int:
 def command_labels(options: argparse.Namespace) -> int:
     policy = prepared_policy(options)
     repo = repo_target(policy, options.repo_key)
-    if repo.backend is Backend.LOCAL:
-        for name in sync_local_labels(policy, repo):
-            print(f"wrote {name}")
-        return EXIT_OK
     commands = label_commands(policy, repo)
     reader = github_reader_for(repo, policy.state_dir)
     if options.dry_run:

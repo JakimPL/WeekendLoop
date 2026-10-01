@@ -11,6 +11,7 @@ from typing import Final
 from weekend_loop.claude_cli import CLAUDE_BINARY, SETPRIV_BINARY, TIMEOUT_BINARY
 from weekend_loop.confinement import systemctl
 from weekend_loop.github import GH_BINARY
+from weekend_loop.local_github.wrapper import is_local_board_wrapper
 from weekend_loop.models import Policy, Record, ScheduledCommand
 from weekend_loop.preflight import SANDBOX_BINARIES
 from weekend_loop.setup import messages
@@ -30,6 +31,7 @@ LOGINCTL_BINARY: Final[str] = "loginctl"
 UV_BINARY: Final[str] = "uv"
 CLI_NAME: Final[str] = "weekend-loop"
 USER_VARIABLE: Final[str] = "USER"
+PATH_VARIABLE: Final[str] = "PATH"
 LINGER_PROPERTY: Final[str] = "Linger"
 LINGER_ON: Final[str] = "yes"
 ENABLED_STATE: Final[str] = "enabled"
@@ -50,9 +52,17 @@ class UnitFailure(Record):
     reason: str
 
 
+def located_binary(name: str) -> Path | None:
+    for directory in os.environ.get(PATH_VARIABLE, "").split(os.pathsep):
+        found = shutil.which(name, path=directory)
+        if found is not None and not is_local_board_wrapper(Path(found)):
+            return Path(found)
+    return None
+
+
 def locate_binaries(names: tuple[str, ...]) -> dict[str, Path]:
-    located = {name: shutil.which(name) for name in names}
-    return {name: Path(location) for name, location in located.items() if location is not None}
+    located = {name: located_binary(name) for name in names}
+    return {name: location for name, location in located.items() if location is not None}
 
 
 def cli_binary() -> Path:

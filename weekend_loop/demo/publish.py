@@ -8,13 +8,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Final
 
-from weekend_loop.demo.board import commit_playground
+from weekend_loop.demo.playground import stage_playground
 from weekend_loop.demo.seed import (
     GITHUB_REPO_KEY,
     SeedOutcome,
     acceptance_map,
     issues_directory,
     load_seed_issues,
+    overlapping_branches,
     seed_repository,
     write_acceptance_map,
 )
@@ -118,17 +119,21 @@ def is_workflow_rejection(stderr: str) -> bool:
     return all(marker in lowered for marker in WORKFLOW_REJECTION_MARKERS)
 
 
-def push_playground(context: SetupContext, environment: dict[str, str]) -> None:
-    base_reference = f"{HEADS_PREFIX}{context.repo.base_branch}"
+def wanted_branches(context: SetupContext) -> list[str]:
+    issues = load_seed_issues(issues_directory(context.examples))
+    return [context.repo.base_branch, *overlapping_branches(issues)]
+
+
+def push_playground(
+    context: SetupContext, environment: dict[str, str], branches: list[str]
+) -> None:
     with TemporaryDirectory() as temporary:
         staging = Path(temporary) / STAGING_DIRECTORY_NAME
-        commit_playground(context.examples, staging, context.repo.base_branch)
+        overlapping = wanted_branches(context)[1:]
+        stage_playground(context.examples, staging, context.repo.base_branch, overlapping)
+        references = [f"{HEADS_PREFIX}{branch}:{HEADS_PREFIX}{branch}" for branch in branches]
         try:
-            run_git(
-                ["push", context.remote_url, f"{base_reference}:{base_reference}"],
-                staging,
-                environment,
-            )
+            run_git(["push", context.remote_url, *references], staging, environment)
         except subprocess.CalledProcessError as error:
             if is_workflow_rejection(error.stderr):
                 raise OperatorActionRequiredError(
@@ -139,18 +144,19 @@ def push_playground(context: SetupContext, environment: dict[str, str]) -> None:
 
 def publish_playground(context: SetupContext) -> str:
     environment = token_environment(context)
-    branches = remote_branches(context, environment)
+    present = remote_branches(context, environment)
     base_branch = context.repo.base_branch
-    if base_branch in branches:
-        return f"{context.repo.slug} already carries {base_branch}"
-    if branches:
+    if present and base_branch not in present:
         raise OperatorActionRequiredError(
             FOREIGN_BRANCHES_INSTRUCTIONS.format(
-                slug=context.repo.slug, branches=", ".join(branches), base_branch=base_branch
+                slug=context.repo.slug, branches=", ".join(present), base_branch=base_branch
             )
         )
-    push_playground(context, environment)
-    return f"pushed the Pocketchat mockup to {context.repo.slug} on {base_branch}"
+    missing = [branch for branch in wanted_branches(context) if branch not in present]
+    if not missing:
+        return f"{context.repo.slug} already carries the mockup and the colleague's branch"
+    push_playground(context, environment, missing)
+    return f"pushed {', '.join(missing)} to {context.repo.slug}"
 
 
 def gh_commands(context: SetupContext) -> GitHubReader:

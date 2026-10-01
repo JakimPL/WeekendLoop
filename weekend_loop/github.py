@@ -10,7 +10,9 @@ from typing import Any, Final, Protocol
 
 from weekend_loop.github_queries import BLOCKERS_QUERY
 from weekend_loop.guards import assert_branch_allowed, assert_labels_allowed
+from weekend_loop.local_github.paths import wrapper_path
 from weekend_loop.models import (
+    Backend,
     IdentityPolicy,
     Issue,
     IssueComment,
@@ -294,6 +296,8 @@ class GitHubReader:
 
 
 def gh_binary(repo: RepoTarget, state_directory: Path) -> str:
+    if repo.backend is Backend.LOCAL:
+        return str(wrapper_path(state_directory))
     return GH_BINARY
 
 

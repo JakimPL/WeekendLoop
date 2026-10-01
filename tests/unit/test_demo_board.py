@@ -1,3 +1,4 @@
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -7,12 +8,22 @@ from tests.unit.conftest import base_policy, write_policy
 from weekend_loop.backends import reader_for, with_foreign_activity, writer_for
 from weekend_loop.briefing import write_prepared
 from weekend_loop.cli import EXIT_OK, main
+from weekend_loop.demo.playground import git
+from weekend_loop.github import reader_for as github_reader_for
 from weekend_loop.github import signed
+from weekend_loop.labels import LABEL_COLOUR, board_labels, create_labels, label_arguments
 from weekend_loop.local_github.paths import local_repository_path
-from weekend_loop.local_github.store import open_board
-from weekend_loop.models import Backend, IssueState, PreparedSession
+from weekend_loop.local_github.store import open_board, read_account
+from weekend_loop.models import (
+    Backend,
+    BoardLabel,
+    CheckOutcome,
+    IssueState,
+    Policy,
+    PreparedSession,
+)
 from weekend_loop.policy import policy_at, repo_target
-from weekend_loop.preflight import run_preflight
+from weekend_loop.preflight import ISSUE_DEPENDENCIES_CHECK, run_preflight
 from weekend_loop.runs import ledger_path
 from weekend_loop.workbench import run_git
 
@@ -20,6 +31,8 @@ NOW = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
 SEEDED_ISSUE_COUNT = 7
 DARK_MODE_ISSUE = 6
 FIRST_ISSUE = 1
+ARCHIVED_BRANCH = "weekend/5-archived"
+SPEED_BRANCH = "weekend/1-empty-speed"
 
 
 def local_policy_path(tmp_path: Path) -> Path:
@@ -43,14 +56,10 @@ def test_seeding_writes_every_issue_and_the_colleagues_pull_request(tmp_path: Pa
     pull_requests = board.open_pull_requests()
     assert [pull_request.head_branch for pull_request in pull_requests] == ["feat/dark-mode"]
     assert pull_requests[0].draft
-    assert [label.name for label in board.read_index().labels] == [
-        policy.labels.auto,
-        policy.labels.approved,
-        policy.labels.never,
-        policy.labels.review,
-        policy.labels.needs_input,
-        policy.labels.unfinished,
-    ]
+    assert pull_requests[0].author == read_account(board.directory.parent).login
+    labels = {label.name for label in board.read_index().labels}
+    assert {label.name for label in board_labels(policy.labels)} <= labels
+    assert {"enhancement", "refactor"} <= labels
 
 
 def test_the_reader_reports_the_pull_request_that_overlaps_an_issue(tmp_path: Path) -> None:
@@ -108,40 +117,57 @@ def test_a_label_outside_the_agents_namespace_is_refused(tmp_path: Path) -> None
     assert board.read_issue(FIRST_ISSUE).labels == before
 
 
-def test_an_opened_pull_request_records_the_branch_it_points_at(tmp_path: Path) -> None:
+def push_stacked_branches(policy: Policy, repository: Path, checkout: Path) -> None:
+    git(["clone", str(repository), str(checkout)], cwd=repository.parent)
+    for branch, change in ((ARCHIVED_BRANCH, "archived"), (SPEED_BRANCH, "speed")):
+        git(["checkout", "-b", branch], cwd=checkout)
+        (checkout / f"{change}.txt").write_text(f"{change}\n")
+        git(["add", "--all"], cwd=checkout)
+        git(["commit", "--message", f"Added: {change}"], cwd=checkout)
+        git(["push", "origin", branch], cwd=checkout)
+
+
+def test_a_stacked_pull_request_points_at_its_parent_and_joins_its_stack(tmp_path: Path) -> None:
     policy = policy_at(seeded(tmp_path))
     repo = repo_target(policy, "demo")
+    repository = local_repository_path(policy.state_dir, repo.slug)
+    push_stacked_branches(policy, repository, tmp_path / "checkout")
     writer = writer_for(repo, policy.state_dir, policy.identity, policy.labels.namespace)
-    url = writer.open_draft_pull_request(
-        "weekend/1-empty-speed", "Fix the parser", "Refs #1", "weekend/5-archived"
+    parent = writer.open_draft_pull_request(ARCHIVED_BRANCH, "Archive", "Refs #5", "main")
+    child = writer.open_draft_pull_request(
+        SPEED_BRANCH, "Fix the parser", "Refs #1", ARCHIVED_BRANCH
     )
     board = open_board(policy.state_dir, repo.slug)
-    opened = [
+    [opened] = [
         pull_request
         for pull_request in board.open_pull_requests()
-        if pull_request.head_branch == "weekend/1-empty-speed"
+        if pull_request.head_branch == SPEED_BRANCH
     ]
-    assert len(opened) == 1
-    assert opened[0].draft and opened[0].state is IssueState.OPEN
-    assert opened[0].base_branch == "weekend/5-archived"
-    assert str(opened[0].number) in url
-    writer.link_stack([3, opened[0].number])
-    assert board.read_index().stacks == [[3, opened[0].number]]
+    assert opened.draft and opened.state is IssueState.OPEN
+    assert opened.base_branch == ARCHIVED_BRANCH
+    assert child.endswith(f"/pull/{opened.number}")
+    numbers = [int(url.rsplit("/", 1)[1]) for url in (parent, child)]
+    writer.link_stack(numbers)
+    assert board.read_index().stacks == [numbers]
+    with pytest.raises(subprocess.CalledProcessError):
+        writer.open_draft_pull_request(SPEED_BRANCH, "Again", "Refs #1", ARCHIVED_BRANCH)
 
 
-def test_preflight_asks_for_no_github_credential_when_the_board_is_local(tmp_path: Path) -> None:
+def test_preflight_reaches_the_local_board_through_its_gh(tmp_path: Path) -> None:
     policy = policy_at(seeded(tmp_path))
     report = run_preflight(policy, "demo", NOW, None)
-    names = [check.name for check in report.checks]
-    assert not [name for name in names if "github" in name]
-    assert f"local board for {repo_target(policy, 'demo').slug}" in names
+    checks = {check.name: check for check in report.checks}
+    assert checks["gh"].detail.startswith("gh version local")
+    access = checks[f"github access to {repo_target(policy, 'demo').slug}"]
+    assert access.outcome is CheckOutcome.PASSED and access.detail.startswith("push=true")
+    assert checks[ISSUE_DEPENDENCIES_CHECK].outcome is CheckOutcome.PASSED
 
 
 def test_preflight_blocks_a_run_when_the_board_was_never_seeded(tmp_path: Path) -> None:
     policy = policy_at(local_policy_path(tmp_path))
     report = run_preflight(policy, "demo", NOW, None)
-    failures = [check.name for check in report.checks if check.outcome.value != "ok"]
-    assert f"local board for {repo_target(policy, 'demo').slug}" in failures
+    failures = {check.name: check.detail for check in report.checks if check.outcome.value != "ok"}
+    assert "`weekend-loop demo up` builds it" in failures["gh"]
 
 
 def test_reseeding_rebuilds_the_same_repository(tmp_path: Path) -> None:
@@ -186,6 +212,11 @@ def test_a_board_under_a_namespace_of_your_own_takes_its_labels(tmp_path: Path) 
     policy = policy_at(seeded(tmp_path))
     repo = repo_target(policy, "demo")
     writer = writer_for(repo, policy.state_dir, policy.identity, "bot/")
+    with pytest.raises(subprocess.CalledProcessError):
+        writer.add_labels(FIRST_ISSUE, ["bot/review"])
+    review = BoardLabel(name="bot/review", description="Review", colour=LABEL_COLOUR)
+    reader = github_reader_for(repo, policy.state_dir)
+    assert create_labels(reader, [label_arguments(repo.slug, review)]) is None
     writer.add_labels(FIRST_ISSUE, ["bot/review"])
     assert "bot/review" in open_board(policy.state_dir, repo.slug).read_issue(FIRST_ISSUE).labels
     with pytest.raises(ValueError, match="bot/"):

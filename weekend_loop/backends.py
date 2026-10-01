@@ -1,20 +1,16 @@
 from pathlib import Path
-from typing import Final, Protocol
+from typing import Protocol
 
 from weekend_loop.github import last_foreign_activity, read_token
 from weekend_loop.github import reader_for as github_reader_for
 from weekend_loop.github import writer_for as github_writer_for
-from weekend_loop.local_board import local_reader_for, local_writer_for
 from weekend_loop.models import (
-    Backend,
     IdentityPolicy,
     Issue,
     IssueComment,
     PullRequest,
     RepoTarget,
 )
-
-LOCAL_TOKEN: Final[str] = "local-board-no-token"
 
 
 class BoardReader(Protocol):
@@ -55,16 +51,12 @@ def with_foreign_activity(reader: BoardReader, issue: Issue, owner_login: str) -
 
 
 def reader_for(repo: RepoTarget, state_directory: Path) -> BoardReader:
-    if repo.backend is Backend.LOCAL:
-        return local_reader_for(repo, state_directory)
     return github_reader_for(repo, state_directory)
 
 
 def writer_for(
     repo: RepoTarget, state_directory: Path, identity: IdentityPolicy, label_namespace: str
 ) -> BoardWriter:
-    if repo.backend is Backend.LOCAL:
-        return local_writer_for(repo, state_directory, identity, label_namespace)
     return github_writer_for(repo, state_directory, identity, label_namespace)
 
 
@@ -75,6 +67,4 @@ def board_operator_login(identity: IdentityPolicy, reader: BoardReader) -> str:
 
 
 def repository_token(repo: RepoTarget) -> str:
-    if repo.backend is Backend.LOCAL:
-        return LOCAL_TOKEN
     return read_token(repo.token_path())

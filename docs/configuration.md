@@ -42,15 +42,16 @@ Unknown keys are rejected when the configuration loads:
 
 ## Backends
 
-Each repository has a `backend`:
+Each repository has a `backend`. Both run the same code, which talks to the board through `gh`:
 
-- `local` stores issues, comments and pull requests as JSON under `state/board/<slug>/`, next to a
-  bare git repository. It needs no GitHub account or token. The example project uses it.
-- `github` uses `gh` to read issues and open draft pull requests. It needs a fine-grained token in
+- `github` runs the GitHub CLI against github.com. It needs a fine-grained token in
   `secrets/github-<repo-key>.token`.
+- `local` runs a `gh` of Weekend Loop's own that answers the same commands from files under
+  `state/board/`, next to a bare git repository the run pushes to. It needs no GitHub account or
+  network. The example project uses it.
 
-Both backends behave the same. Each repository keeps its own checkout, answers and triage. You can
-list the same repository twice, once per backend, to rehearse on disk and then run for real.
+Each repository keeps its own checkout, answers and triage. You can list the same repository twice,
+once per backend, to rehearse on disk and then run for real.
 
 ## Labels
 

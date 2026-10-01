@@ -10,6 +10,7 @@ import pytest
 from tests.unit.conftest import issue_payload, write_github_data, write_test_policy
 from weekend_loop.admission import MemoryReading
 from weekend_loop.claude_cli import read_oauth_token
+from weekend_loop.local_github.wrapper import install_wrapper
 from weekend_loop.models import (
     BudgetPolicy,
     CheckOutcome,
@@ -21,7 +22,9 @@ from weekend_loop.models import (
 )
 from weekend_loop.policy import policy_at, repo_target
 from weekend_loop.preflight import (
+    LOCAL_GH_ON_PATH_DETAIL,
     SOCKET_FILTER_PACKAGE,
+    check_github_cli,
     check_memory_pool,
     check_oauth_token,
     check_secret_file,
@@ -126,6 +129,17 @@ def prepare_environment(tmp_path: Path, fake_binaries: Path, push: bool) -> Path
         push=push,
     )
     return write_test_policy(tmp_path, NOW + timedelta(days=2))
+
+
+def test_a_local_boards_gh_on_path_never_answers_for_github(
+    tmp_path: Path, fake_binaries: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy = policy_at(prepare_environment(tmp_path, fake_binaries, push=False))
+    wrapper = install_wrapper(tmp_path / "demo-state")
+    monkeypatch.setenv("PATH", f"{wrapper.parent}:{fake_binaries}:/usr/bin:/bin")
+    check = check_github_cli(repo_target(policy, "dryrun"), policy.state_dir)
+    assert check.outcome is CheckOutcome.FAILED
+    assert check.detail == LOCAL_GH_ON_PATH_DETAIL.format(directory=wrapper.parent)
 
 
 def test_a_read_only_repository_clears_preflight(tmp_path: Path, fake_binaries: Path) -> None:

@@ -8,7 +8,7 @@ from weekend_loop.config_view import EXAMPLE_EMAIL, EXAMPLE_SLUG
 from weekend_loop.fences import NO_FORBIDDEN_PATHS, render_fences
 from weekend_loop.github import reader_for
 from weekend_loop.labels import create_labels, label_commands
-from weekend_loop.models import Backend, CheckOutcome, Policy, Record, RepoTarget, Workspace
+from weekend_loop.models import CheckOutcome, Policy, Record, RepoTarget, Workspace
 from weekend_loop.policy import load_policy, repo_target
 from weekend_loop.preflight import (
     CLAUDE_TOKEN_CHECK,
@@ -207,12 +207,11 @@ def set_up(
     run: SetupRun,
 ) -> SetupResult:
     run.record(claude_token_step(policy.workspace.oauth_token_path, operator))
-    if repo.backend is Backend.GITHUB:
-        token = run.record(github_token_step(repo, policy.state_dir, operator))
-        if token.mark is Mark.DONE:
-            run.record(labels_step(policy, repo))
-        else:
-            run.record(todo(messages.LABELS, messages.LABELS_WAIT))
+    token = run.record(github_token_step(repo, policy.state_dir, operator))
+    if token.mark is Mark.DONE:
+        run.record(labels_step(policy, repo))
+    else:
+        run.record(todo(messages.LABELS, messages.LABELS_WAIT))
     render_fences(policy.workspace, Path.home(), NO_FORBIDDEN_PATHS)
     for steps in (sandbox_steps(policy.workspace), socket_filter_steps()):
         for outcome in steps.outcomes:

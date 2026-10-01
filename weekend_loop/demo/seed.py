@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import re
 from pathlib import Path
@@ -43,16 +42,6 @@ GITHUB_REPO_KEY: Final[str] = "demo-github"
 ISSUE_LIST_LIMIT: Final[int] = 200
 FRONT_MATTER_DELIMITER: Final[str] = "---"
 ISSUE_URL_PATTERN: Final[re.Pattern[str]] = re.compile(r"/issues/(\d+)\s*$")
-OVERLAP_FILE_PATH: Final[str] = "pocketchat/static/dark-mode.css"
-OVERLAP_FILE_CONTENT: Final[str] = (
-    "@media (prefers-color-scheme: dark) {\n"
-    "  :root {\n"
-    "    --page: #1A1A1A;\n"
-    "    --surface: #262626;\n"
-    "  }\n"
-    "}\n"
-)
-OVERLAP_COMMIT_MESSAGE: Final[str] = "feat(page): start the dark mode"
 OVERLAP_PULL_REQUEST_TITLE: Final[str] = "feat(page): dark mode (work in progress, #{issue_number})"
 EXAMPLE_LABEL_COLOUR: Final[str] = "C5DEF5"
 EXAMPLE_LABELS: Final[tuple[tuple[str, str], ...]] = (
@@ -78,19 +67,6 @@ class ListedIssue(BaseModel):
 
     number: int
     title: str
-
-
-class ReferencedObject(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    sha: str
-
-
-class ListedReference(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    ref: str
-    object: ReferencedObject
 
 
 class SeedOutcome(BaseModel):
@@ -160,12 +136,6 @@ def existing_issue_numbers(commands: GhCommands, slug: str) -> dict[str, int]:
     return {issue.title: issue.number for issue in listed}
 
 
-def branch_exists(commands: GhCommands, slug: str, branch: str) -> bool:
-    output = commands.run(["api", f"repos/{slug}/git/matching-refs/heads/{branch}"])
-    references = TypeAdapter(list[ListedReference]).validate_json(output or "[]")
-    return any(reference.ref == f"refs/heads/{branch}" for reference in references)
-
-
 def pull_request_exists(commands: GhCommands, slug: str, branch: str) -> bool:
     output = commands.run(
         [
@@ -182,41 +152,6 @@ def pull_request_exists(commands: GhCommands, slug: str, branch: str) -> bool:
         ]
     )
     return bool(json.loads(output or "[]"))
-
-
-def base_commit(commands: GhCommands, repo: RepoTarget) -> str:
-    output = commands.run(["api", f"repos/{repo.slug}/git/ref/heads/{repo.base_branch}"])
-    return ListedReference.model_validate_json(output).object.sha
-
-
-def create_overlapping_branch(commands: GhCommands, repo: RepoTarget, branch: str) -> None:
-    commands.run(
-        [
-            "api",
-            "--method",
-            "POST",
-            f"repos/{repo.slug}/git/refs",
-            "-f",
-            f"ref=refs/heads/{branch}",
-            "-f",
-            f"sha={base_commit(commands, repo)}",
-        ]
-    )
-    encoded_content = base64.b64encode(OVERLAP_FILE_CONTENT.encode()).decode()
-    commands.run(
-        [
-            "api",
-            "--method",
-            "PUT",
-            f"repos/{repo.slug}/contents/{OVERLAP_FILE_PATH}",
-            "-f",
-            f"message={OVERLAP_COMMIT_MESSAGE}",
-            "-f",
-            f"branch={branch}",
-            "-f",
-            f"content={encoded_content}",
-        ]
-    )
 
 
 def open_overlapping_pull_request(
@@ -244,8 +179,6 @@ def open_overlapping_pull_request(
 def ensure_overlapping_pull_request(
     commands: GhCommands, repo: RepoTarget, branch: str, issue_number: int
 ) -> bool:
-    if not branch_exists(commands, repo.slug, branch):
-        create_overlapping_branch(commands, repo, branch)
     if pull_request_exists(commands, repo.slug, branch):
         return False
     open_overlapping_pull_request(commands, repo, branch, issue_number)
@@ -293,6 +226,10 @@ def seed_repository(
             commands, repo, issues, issue_numbers
         ),
     )
+
+
+def overlapping_branches(issues: list[SeedIssue]) -> list[str]:
+    return [issue.overlapping_branch for issue in issues if issue.overlapping_branch is not None]
 
 
 def acceptance_map(issues: list[SeedIssue], issue_numbers: dict[str, int]) -> dict[str, str]:

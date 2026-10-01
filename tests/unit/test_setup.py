@@ -12,13 +12,15 @@ import yaml
 from tests.support.fakes import FAKE_NPM, FAKE_SANDBOX_TOOL, install_fake
 from tests.unit.conftest import OPERATOR_HOME, base_policy, write_github_data
 from weekend_loop.cli import EXIT_BLOCKED, EXIT_OK, EXIT_REFUSED, main
+from weekend_loop.github import GH_BINARY
+from weekend_loop.local_github.wrapper import install_wrapper
 from weekend_loop.models import Workspace
 from weekend_loop.policy import policy_at
 from weekend_loop.setup import messages
 from weekend_loop.setup.outcomes import Mark, StepOutcome
 from weekend_loop.setup.steps import SetupResult, run_setup
 from weekend_loop.setup.system import sandbox_steps
-from weekend_loop.setup.timers import scheduled_timers
+from weekend_loop.setup.timers import locate_binaries, scheduled_timers
 from weekend_loop.workspace_init import initialise_workspace
 
 NOW: Final[datetime] = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
@@ -176,6 +178,14 @@ def test_a_run_dropped_from_the_schedule_loses_its_timer(
     assert not (units / "weekend-loop-weekend-sun-0900.timer").exists()
     disabled = [call for call in calls(fake_binaries, "systemctl") if call[1:2] == ["disable"]]
     assert any("weekend-loop-weekend-sun-0900.timer" in call for call in disabled)
+
+
+def test_a_local_boards_gh_never_reaches_the_timers(
+    tmp_path: Path, fake_binaries: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wrapper = install_wrapper(tmp_path / "demo-state")
+    monkeypatch.setenv("PATH", f"{wrapper.parent}:{fake_binaries}")
+    assert locate_binaries((GH_BINARY,)) == {GH_BINARY: fake_binaries / GH_BINARY}
 
 
 def test_a_sandbox_without_its_packages_names_the_install(

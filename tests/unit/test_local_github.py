@@ -6,7 +6,7 @@ from typing import Any, Final
 
 import pytest
 
-from weekend_loop.demo.board import git
+from weekend_loop.demo.playground import git
 from weekend_loop.github import blockers_from_pages
 from weekend_loop.github_queries import BLOCKERS_QUERY
 from weekend_loop.local_github import messages

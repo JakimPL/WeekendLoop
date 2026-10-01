@@ -1,12 +1,20 @@
+import subprocess
 from pathlib import Path
 from typing import Final
 
-from tests.unit.test_local_board import FIRST_ISSUE, seeded
+from tests.unit.test_demo_board import FIRST_ISSUE, seeded
 from weekend_loop.backends import reader_for, writer_for
 from weekend_loop.briefing import answers_of, notes_of, question_key, read_briefing
 from weekend_loop.github import signed
 from weekend_loop.intake import ingest_answers, replied_issues
-from weekend_loop.local_github.store import LocalBoard, now_utc, open_board, read_account
+from weekend_loop.local_github.paths import wrapper_path
+from weekend_loop.local_github.store import (
+    LocalBoard,
+    locked,
+    now_utc,
+    open_board,
+    read_account,
+)
 from weekend_loop.models import BoardComment, Intake, IssueIntake, Policy, RepoTarget
 from weekend_loop.policy import policy_at, repo_target
 from weekend_loop.questions import PREPARE_LEAD, render_question_comment
@@ -27,10 +35,19 @@ def asked(tmp_path: Path, label: bool) -> tuple[Policy, RepoTarget, LocalBoard]:
 
 
 def reply(board: LocalBoard, author: str, body: str) -> None:
-    comment = BoardComment(
-        id=board.take_comment_id(), author=author, created_at=now_utc(), body=body
-    )
-    board.append_comment(FIRST_ISSUE, comment)
+    root = board.directory.parent
+    if author == operator(board):
+        comment = ["issue", "comment", str(FIRST_ISSUE), "--repo", board.slug, "--body-file", "-"]
+        gh = wrapper_path(root.parent)
+        subprocess.run([str(gh), *comment], input=body, text=True, capture_output=True, check=True)
+        return
+    with locked(root, True):
+        board.append_comment(
+            FIRST_ISSUE,
+            BoardComment(
+                id=board.take_comment_id(), author=author, created_at=now_utc(), body=body
+            ),
+        )
 
 
 def operator(board: LocalBoard) -> str:

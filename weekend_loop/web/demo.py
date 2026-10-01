@@ -30,11 +30,11 @@ from weekend_loop.models import (
     Verdict,
 )
 from weekend_loop.status import Liveness, RunStatus, current_phrase
+from weekend_loop.web.theme import browsable
 
 CLOCK_FORMAT: Final[str] = "%H:%M:%S"
 DETAIL_SEPARATOR: Final[str] = " · "
 REASON_SEPARATOR: Final[str] = ", "
-LINKABLE_SCHEMES: Final[tuple[str, ...]] = ("https://", "http://")
 BRANCH_PREFIX: Final[str] = "branch "
 QUESTIONS_COMMENT: Final[str] = "questions"
 REVIEW_COMMENT: Final[str] = "review"
@@ -339,12 +339,6 @@ def task_outcome(task: Task) -> Outcome:
     if task.status is TaskStatus.ASSESSED and task.assessment is not None:
         return labelled(ASSESSED_OUTCOMES[task.assessment.verdict], None)
     return labelled(STATUS_OUTCOMES[task.status], None)
-
-
-def browsable(url: str | None) -> str | None:
-    if url is None or not url.startswith(LINKABLE_SCHEMES):
-        return None
-    return url
 
 
 def demo_task(task: Task) -> DemoTask:

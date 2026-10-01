@@ -16,14 +16,19 @@ from tests.support.fakes import (
     install_confinement_fakes,
     install_fake,
 )
+from weekend_loop.github import ISSUE_FIELDS
+from weekend_loop.local_github.payloads import IssueView
+from weekend_loop.local_github.payloads import issue_payload as board_payload
 from weekend_loop.models import (
     Assessment,
     Backend,
     Blocker,
+    BoardIssue,
     Confidence,
     Effort,
     EligibilityDecision,
     IneligibilityReason,
+    IssueState,
     Policy,
     RepoMode,
     Risk,
@@ -41,6 +46,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 REAL_CONFIG = REPOSITORY_ROOT / "examples" / "config.yaml"
 OPERATOR_HOME = Path("/operator-home")
 OWNER_LOGIN = "example-operator"
+CANNED_SLUG = "owner/repo"
 DRY_RUN_REPO_KEY = "dryrun"
 WEEK_START = {"day_of_week": "mon", "hour": 0, "minute": 0}
 
@@ -104,18 +110,21 @@ def issue_payload(
     number: int, title: str, body: str, labels: list[str], assignees: list[str]
 ) -> dict[str, Any]:
     moment = datetime.now(UTC) - timedelta(days=10)
-    return {
-        "number": number,
-        "title": title,
-        "body": body,
-        "labels": [{"name": name} for name in labels],
-        "assignees": [{"login": login} for login in assignees],
-        "milestone": None,
-        "author": {"login": OWNER_LOGIN},
-        "createdAt": moment.isoformat(),
-        "updatedAt": moment.isoformat(),
-        "url": f"https://github.com/owner/repo/issues/{number}",
-    }
+    issue = BoardIssue(
+        number=number,
+        title=title,
+        body=body,
+        labels=labels,
+        assignees=assignees,
+        milestone=None,
+        author=OWNER_LOGIN,
+        created_at=moment,
+        updated_at=moment,
+        state=IssueState.OPEN,
+        blocked_by=[],
+    )
+    view = IssueView(issue=issue, slug=CANNED_SLUG, labels={}, comments=[], viewer=OWNER_LOGIN)
+    return board_payload(view, ISSUE_FIELDS.split(","))
 
 
 def write_github_data(

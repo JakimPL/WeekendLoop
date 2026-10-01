@@ -12,7 +12,7 @@ from weekend_loop.web.render import (
     render_notes,
     render_status_chips,
 )
-from weekend_loop.web.theme import PAGE_STYLE, PRODUCT_NAME, escape
+from weekend_loop.web.theme import PAGE_STYLE, PRODUCT_NAME, browsable, escape
 from weekend_loop.web.view import (
     ANSWER_SOURCE_BRIEFING,
     ANSWER_SOURCE_RUN,
@@ -90,10 +90,17 @@ def render_task_table(rows: list[TaskRow]) -> str:
     return f"<table>{header}{body}</table>"
 
 
+def pull_request_link(url: str) -> str:
+    target = browsable(url)
+    if target is None:
+        return escape(url)
+    return f'<a href="{escape(target)}">{escape(url)}</a>'
+
+
 def render_pull_requests(rows: list[TaskRow], links: dict[int, str]) -> str:
     entries = [
         f'<div class="weekend-note">#{row.issue_number} '
-        f'<a href="{escape(links[row.issue_number])}">{escape(links[row.issue_number])}</a></div>'
+        f"{pull_request_link(links[row.issue_number])}</div>"
         for row in rows
         if row.issue_number in links
     ]

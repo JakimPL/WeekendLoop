@@ -41,14 +41,6 @@ class ScriptedCommands:
         )
 
 
-def reference(slug: str, branch: str) -> dict[str, str | dict[str, str]]:
-    return {"ref": f"refs/heads/{branch}", "object": {"sha": f"{slug}-commit"}}
-
-
-def references(slug: str, branch: str) -> str:
-    return json.dumps([reference(slug, branch)])
-
-
 def listed_issues(issues: list[SeedIssue]) -> str:
     return json.dumps(
         [{"number": number, "title": issue.title} for number, issue in enumerate(issues, 1)]
@@ -103,10 +95,6 @@ def test_an_empty_repository_gets_labels_issues_and_the_overlapping_pull_request
     commands = ScriptedCommands(
         {
             "gh issue list": "[]",
-            f"gh api repos/{repo.slug}/git/matching-refs": "[]",
-            f"gh api repos/{repo.slug}/git/ref/heads/main": json.dumps(
-                reference(repo.slug, "main")
-            ),
             "gh pr list": "[]",
         }
     )
@@ -117,7 +105,6 @@ def test_an_empty_repository_gets_labels_issues_and_the_overlapping_pull_request
     for issue in issues:
         assert issue.title in log
     assert log.count("gh issue create") == EXPECTED_ISSUE_COUNT
-    assert f"sha={repo.slug}-commit" in log
     assert log.count("gh pr create") == 1
     assert sorted(outcome.issue_numbers.values()) == list(range(1, EXPECTED_ISSUE_COUNT + 1))
 
@@ -142,7 +129,6 @@ def test_a_seeded_repository_is_left_as_it_is(
     commands = ScriptedCommands(
         {
             "gh issue list": listed_issues(issues),
-            f"gh api repos/{repo.slug}/git/matching-refs": references(repo.slug, "feat/dark-mode"),
             "gh pr list": '[{"number": 8}]',
         }
     )
@@ -151,7 +137,7 @@ def test_a_seeded_repository_is_left_as_it_is(
     assert outcome.created_issues == []
     assert outcome.opened_pull_requests == []
     assert outcome.issue_numbers == {issue.key: number for number, issue in enumerate(issues, 1)}
-    for write in ("gh issue create", "gh pr create", "--method POST", "--method PUT"):
+    for write in ("gh issue create", "gh pr create", "gh api"):
         assert write not in log
 
 
@@ -163,7 +149,6 @@ def test_a_half_seeded_repository_is_completed(
     commands = ScriptedCommands(
         {
             "gh issue list": listed_issues(issues[:3]),
-            f"gh api repos/{repo.slug}/git/matching-refs": references(repo.slug, "feat/dark-mode"),
             "gh pr list": "[]",
         }
     )
@@ -172,4 +157,3 @@ def test_a_half_seeded_repository_is_completed(
     assert outcome.created_issues == [issue.key for issue in issues[3:]]
     assert outcome.opened_pull_requests == ["feat/dark-mode"]
     assert log.count("gh issue create") == EXPECTED_ISSUE_COUNT - 3
-    assert "--method POST" not in log

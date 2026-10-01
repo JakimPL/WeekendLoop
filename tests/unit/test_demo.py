@@ -145,7 +145,9 @@ def test_the_checks_and_hidden_tests_read_as_passed_or_failed() -> None:
 
 def test_the_worker_and_the_pull_request_read_in_plain_words() -> None:
     worker = outcome_of(EventType.WORKER_FINISHED, "done for $0.31 [ok], 0 denials")
-    pull_request = outcome_of(EventType.PULL_REQUEST_OPENED, "board://owner/repo/pull/12")
+    pull_request = outcome_of(
+        EventType.PULL_REQUEST_OPENED, "https://board.invalid/owner/repo/pull/12"
+    )
 
     assert worker == Outcome(text="done", tone=Tone.POSITIVE, detail=None)
     assert pull_request.text == "PR #12"
@@ -206,7 +208,9 @@ def test_only_a_web_address_becomes_a_pull_request_link() -> None:
     delivered = task_with(TaskStatus.REVIEW, Verdict.EXECUTE)
     on_github = demo_task(delivered.model_copy(update={"pull_request_url": PULL_REQUEST_URL}))
     on_the_board = demo_task(
-        delivered.model_copy(update={"pull_request_url": "board://owner/repo/pull/12"})
+        delivered.model_copy(
+            update={"pull_request_url": "https://board.invalid/owner/repo/pull/12"}
+        )
     )
 
     assert on_github.link == PULL_REQUEST_URL

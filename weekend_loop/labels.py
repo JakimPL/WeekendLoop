@@ -2,8 +2,7 @@ import subprocess
 from typing import Final
 
 from weekend_loop.github import GhCommands
-from weekend_loop.local_github.store import open_board
-from weekend_loop.models import Backend, BoardLabel, LabelPolicy, Policy, Record, RepoTarget
+from weekend_loop.models import BoardLabel, LabelPolicy, Policy, Record, RepoTarget
 
 LABEL_COLOUR: Final[str] = "5319E7"
 LABEL_NAME_POSITION: Final[int] = 2
@@ -23,16 +22,6 @@ def board_labels(labels: LabelPolicy) -> list[BoardLabel]:
         BoardLabel(name=getattr(labels, field), description=description, colour=LABEL_COLOUR)
         for field, description in LABEL_DESCRIPTIONS
     ]
-
-
-def sync_local_labels(policy: Policy, repo: RepoTarget) -> list[str]:
-    board = open_board(policy.state_dir, repo.slug)
-    index = board.read_index()
-    wanted = board_labels(policy.labels)
-    names = {label.name for label in wanted}
-    kept = [label for label in index.labels if label.name not in names]
-    board.write_index(index.model_copy(update={"labels": [*kept, *wanted]}))
-    return [label.name for label in wanted]
 
 
 class LabelRefusal(Record):
@@ -74,7 +63,3 @@ def create_labels(commands: GhCommands, arguments: list[list[str]]) -> LabelRefu
         except subprocess.CalledProcessError as error:
             return LabelRefusal(label=label_command[LABEL_NAME_POSITION], reason=last_line(error))
     return None
-
-
-def backend_of(repo: RepoTarget) -> Backend:
-    return repo.backend

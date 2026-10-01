@@ -2,18 +2,18 @@
 
 ## Ownership boundaries
 
-- `weekend_loop/github.py` is the only module that talks to GitHub, and
-  `weekend_loop/local_board.py` the only one that writes a local board. Every other module returns
-  data and lets the orchestrator decide.
-- Phases depend on the `BoardReader` and `BoardWriter` contracts in `weekend_loop/backends.py`,
-  never on a concrete backend; `reader_for` and `writer_for` choose between them.
+- `weekend_loop/github.py` is the only module that talks to a board, and it always does so
+  through `gh`. A `local` repository only changes which `gh` runs (`weekend_loop/local_github/`, a
+  `gh` that keeps the board on disk) and where `origin` points. Every other module returns data and
+  lets the orchestrator decide.
+- Phases depend on the `BoardReader` and `BoardWriter` contracts in `weekend_loop/backends.py`.
 - `weekend_loop/notify.py` is the only module that reaches an endpoint outside the repository,
   through one webhook URL the operator wrote into `state/`. An alert that fails is a note, never a
   failed run.
 - `state/briefing/<repo>/` holds only the operator's own words: what they type into
   `weekend_loop/web/`, and what `weekend_loop/intake.py` transcribes from their replies on an
   issue thread. No phase writes guidance of its own there. `weekend_loop/web/` holds no
-  credential and writes only the briefing, the local board and the run's mailbox.
+  credential and writes only the briefing and the run's mailbox.
 - `weekend_loop/questions.py` owns the issue-thread contract: the hidden markers on the agent's
   writing, the question comment and the reply grammar. Asking and reading both go through it.
 - The worker (`claude -p`) runs under `agent_home/` and receives no GitHub credential. Anything it

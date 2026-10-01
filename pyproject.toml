@@ -59,4 +59,7 @@ exclude = ["examples/demo-repo"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers -q"
-markers = ["e2e: a whole run end to end; seconds, not milliseconds"]
+markers = [
+    "e2e: a whole run end to end; seconds, not milliseconds",
+    "live: compares the local gh with GitHub's; needs WEEKEND_LOOP_LIVE_REPO and a signed-in gh",
+]

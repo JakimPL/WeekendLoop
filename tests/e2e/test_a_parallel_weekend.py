@@ -7,9 +7,11 @@ import pytest
 from tests.e2e.conftest import EXECUTE_ISSUES, REPO_KEY, write_worker_plans_by_issue
 from tests.e2e.test_a_weekend import weekend
 from weekend_loop.cli import EXIT_OK
+from weekend_loop.github import reader_for
+from weekend_loop.local_github.payloads import issue_id
 from weekend_loop.local_github.store import open_board
 from weekend_loop.models import RunPhase, TaskStatus, Workspace
-from weekend_loop.policy import policy_at
+from weekend_loop.policy import policy_at, repo_target
 from weekend_loop.runs import latest_run_id, load_run_state, open_run_directory
 
 pytestmark = pytest.mark.e2e
@@ -50,16 +52,23 @@ def test_a_parallel_weekend_stacks_an_issue_on_the_one_github_says_blocks_it(
         },
     )
     policy = policy_at(parallel_workspace.root)
-    board = open_board(policy.state_dir, policy.repos[REPO_KEY].slug)
-    second = board.read_issue(EXECUTE_ISSUES[1])
-    board.write_issue(second.model_copy(update={"blocked_by": [EXECUTE_ISSUES[0]]}))
+    repo = policy.repos[REPO_KEY]
+    board = open_board(policy.state_dir, repo.slug)
+    link = [
+        "api",
+        "-X",
+        "POST",
+        f"repos/{repo.slug}/issues/{EXECUTE_ISSUES[1]}/dependencies/blocked_by",
+        "-F",
+        f"issue_id={issue_id(EXECUTE_ISSUES[0])}",
+    ]
+    reader_for(repo_target(policy, REPO_KEY), policy.state_dir).run(link)
 
     assert weekend(parallel_workspace) == EXIT_OK
 
     run_directory = open_run_directory(policy.state_dir, latest_run_id(policy.state_dir))
-    parent, child = (
-        task for task in load_run_state(run_directory).tasks if task.issue_number in EXECUTE_ISSUES
-    )
+    tasks = {task.issue_number: task for task in load_run_state(run_directory).tasks}
+    parent, child = (tasks[number] for number in EXECUTE_ISSUES)
     assert [parent.status, child.status] == [TaskStatus.REVIEW, TaskStatus.REVIEW]
     assert child.stacked_on == parent.issue_number
     opened = {pull_request.head_branch: pull_request for pull_request in board.open_pull_requests()}
