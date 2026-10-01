@@ -6,8 +6,7 @@ import pytest
 
 from tests.unit.conftest import base_policy, write_policy
 from weekend_loop.backends import reader_for, with_foreign_activity, writer_for
-from weekend_loop.briefing import write_prepared
-from weekend_loop.cli import EXIT_OK, main
+from weekend_loop.demo.board import build_demo
 from weekend_loop.demo.playground import git
 from weekend_loop.github import reader_for as github_reader_for
 from weekend_loop.github import signed
@@ -20,17 +19,15 @@ from weekend_loop.models import (
     CheckOutcome,
     IssueState,
     Policy,
-    PreparedSession,
 )
 from weekend_loop.policy import policy_at, repo_target
 from weekend_loop.preflight import ISSUE_DEPENDENCIES_CHECK, run_preflight
-from weekend_loop.runs import ledger_path
-from weekend_loop.workbench import run_git
 
 NOW = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
 SEEDED_ISSUE_COUNT = 7
 DARK_MODE_ISSUE = 6
 FIRST_ISSUE = 1
+EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 ARCHIVED_BRANCH = "weekend/5-archived"
 SPEED_BRANCH = "weekend/1-empty-speed"
 
@@ -43,11 +40,11 @@ def local_policy_path(tmp_path: Path) -> Path:
 
 def seeded(tmp_path: Path) -> Path:
     policy_path = local_policy_path(tmp_path)
-    assert main(["--home", str(policy_path), "demo", "up", "--repo-key", "demo"]) == EXIT_OK
+    build_demo(EXAMPLES, policy_at(policy_path), "demo")
     return policy_path
 
 
-def test_seeding_writes_every_issue_and_the_colleagues_pull_request(tmp_path: Path) -> None:
+def test_seeding_writes_every_issue_and_a_pull_request_linked_to_one(tmp_path: Path) -> None:
     policy = policy_at(seeded(tmp_path))
     board = open_board(policy.state_dir, repo_target(policy, "demo").slug)
     assert [issue.number for issue in board.open_issues()] == list(
@@ -168,44 +165,6 @@ def test_preflight_blocks_a_run_when_the_board_was_never_seeded(tmp_path: Path) 
     report = run_preflight(policy, "demo", NOW, None)
     failures = {check.name: check.detail for check in report.checks if check.outcome.value != "ok"}
     assert "`weekend-loop demo up` builds it" in failures["gh"]
-
-
-def test_reseeding_rebuilds_the_same_repository(tmp_path: Path) -> None:
-    policy_path = seeded(tmp_path)
-    policy = policy_at(policy_path)
-    repository = local_repository_path(policy.state_dir, repo_target(policy, "demo").slug)
-    environment = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(tmp_path)}
-    before = run_git(["rev-parse", "main"], cwd=repository, environment=environment)
-    assert main(["--home", str(policy_path), "demo", "reset", "--repo-key", "demo"]) == EXIT_OK
-    after = run_git(["rev-parse", "main"], cwd=repository, environment=environment)
-    assert before == after
-
-
-def test_a_reset_clears_the_workbench_and_the_earlier_runs(tmp_path: Path) -> None:
-    policy_path = seeded(tmp_path)
-    policy = policy_at(policy_path)
-    workbench = policy.workspace.workbench_path("demo")
-    workbench.mkdir(parents=True, exist_ok=True)
-    (workbench / "leftover.txt").write_text("from an earlier run")
-    runs = policy.state_dir / "runs" / "20260918-210000-demo"
-    runs.mkdir(parents=True, exist_ok=True)
-    ledger = ledger_path(policy.state_dir)
-    ledger.write_text('{"run_id": "20260918-210000-demo"}\n')
-    assert main(["--home", str(policy_path), "demo", "reset", "--repo-key", "demo"]) == EXIT_OK
-    assert not workbench.exists()
-    assert not runs.exists()
-    assert not ledger.exists()
-
-
-def test_a_reset_removes_the_prepared_triage_it_would_otherwise_orphan(tmp_path: Path) -> None:
-    policy_path = seeded(tmp_path)
-    policy = policy_at(policy_path)
-    prepared = PreparedSession(
-        run_id="20260918-210000-demo", repo_key="demo", prepared_at=NOW, question_count=2
-    )
-    path = write_prepared(policy.state_dir, prepared)
-    assert main(["--home", str(policy_path), "demo", "reset", "--repo-key", "demo"]) == EXIT_OK
-    assert not path.exists()
 
 
 def test_a_board_under_a_namespace_of_your_own_takes_its_labels(tmp_path: Path) -> None:

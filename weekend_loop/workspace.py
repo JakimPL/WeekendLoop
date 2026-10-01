@@ -6,6 +6,7 @@ from weekend_loop.models import Workspace
 
 HOME_VARIABLE: Final[str] = "WEEKEND_LOOP_HOME"
 DEFAULT_HOME_NAME: Final[str] = ".weekend-loop"
+DEMO_HOME_NAME: Final[str] = ".weekend-loop-demo"
 EMPTY_HOME_VARIABLE: Final[str] = (
     f"{HOME_VARIABLE} is set but empty; name a workspace or leave it unset"
 )
@@ -28,6 +29,12 @@ def home_directory(flag: Path | None, environment: Mapping[str, str], user_home:
             raise WorkspaceError(EMPTY_HOME_VARIABLE)
         return Path(named).expanduser().resolve()
     return user_home / DEFAULT_HOME_NAME
+
+
+def demo_home_directory(flag: Path | None, environment: Mapping[str, str], user_home: Path) -> Path:
+    if flag is None and environment.get(HOME_VARIABLE) is None:
+        return user_home / DEMO_HOME_NAME
+    return home_directory(flag, environment, user_home)
 
 
 def required_parts(workspace: Workspace) -> tuple[Path, ...]:

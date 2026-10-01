@@ -14,8 +14,8 @@ from weekend_loop.demo.seed import (
     SeedOutcome,
     acceptance_map,
     issues_directory,
+    linked_pull_request_branches,
     load_seed_issues,
-    overlapping_branches,
     seed_repository,
     write_acceptance_map,
 )
@@ -121,7 +121,7 @@ def is_workflow_rejection(stderr: str) -> bool:
 
 def wanted_branches(context: SetupContext) -> list[str]:
     issues = load_seed_issues(issues_directory(context.examples))
-    return [context.repo.base_branch, *overlapping_branches(issues)]
+    return [context.repo.base_branch, *linked_pull_request_branches(issues)]
 
 
 def push_playground(
@@ -129,8 +129,8 @@ def push_playground(
 ) -> None:
     with TemporaryDirectory() as temporary:
         staging = Path(temporary) / STAGING_DIRECTORY_NAME
-        overlapping = wanted_branches(context)[1:]
-        stage_playground(context.examples, staging, context.repo.base_branch, overlapping)
+        linked = wanted_branches(context)[1:]
+        stage_playground(context.examples, staging, context.repo.base_branch, linked)
         references = [f"{HEADS_PREFIX}{branch}:{HEADS_PREFIX}{branch}" for branch in branches]
         try:
             run_git(["push", context.remote_url, *references], staging, environment)
@@ -154,7 +154,7 @@ def publish_playground(context: SetupContext) -> str:
         )
     missing = [branch for branch in wanted_branches(context) if branch not in present]
     if not missing:
-        return f"{context.repo.slug} already carries the mockup and the colleague's branch"
+        return f"{context.repo.slug} already has {', '.join(wanted_branches(context))}"
     push_playground(context, environment, missing)
     return f"pushed {', '.join(missing)} to {context.repo.slug}"
 
@@ -175,7 +175,12 @@ def seed_summary(outcome: SeedOutcome, tests: dict[str, str]) -> str:
     created = len(outcome.created_issues)
     total = len(outcome.issue_numbers)
     issues = f"created {created} of {total} issues" if created else f"all {total} issues were there"
-    pull_requests = f"opened {len(outcome.opened_pull_requests)} colleague draft pull request(s)"
+    opened = outcome.opened_pull_requests
+    pull_requests = (
+        f"opened a draft pull request on {', '.join(opened)}"
+        if opened
+        else "the draft pull requests on the linked branches were there"
+    )
     tested = ", ".join(f"#{number}" for number in sorted(tests, key=int))
     return f"{issues}, {pull_requests}, hidden tests for {tested}"
 
@@ -225,7 +230,7 @@ def check_readiness(context: SetupContext) -> str:
 
 SETUP_STEPS: Final[tuple[SetupStep, ...]] = (
     SetupStep("publish the Pocketchat mockup", publish_playground),
-    SetupStep("seed the labels, issues and the colleague's pull request", seed_issues),
+    SetupStep("seed the labels, the issues and a pull request linked to one of them", seed_issues),
     SetupStep("run the preflight checks", check_readiness),
 )
 

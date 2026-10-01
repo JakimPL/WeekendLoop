@@ -13,6 +13,7 @@ from tests.support.fakes import (
     FAKE_SANDBOX_TOOL,
     install_confinement_fakes,
     install_fake,
+    install_socket_filter,
 )
 from weekend_loop.cli import EXIT_OK, main
 from weekend_loop.models import Workspace
@@ -113,6 +114,7 @@ def binaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     install_fake(directory, "socat", FAKE_SANDBOX_TOOL)
     install_confinement_fakes(directory)
     install_fake(directory, "bwrap", FAKE_SANDBOX_TOOL)
+    install_socket_filter(directory)
     monkeypatch.setenv("PATH", f"{directory}:/usr/bin:/bin")
     write_assistant_plans(directory)
     return directory

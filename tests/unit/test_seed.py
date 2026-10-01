@@ -87,7 +87,7 @@ def test_every_executable_issue_has_a_hidden_acceptance_test(issues: list[SeedIs
             assert (EXAMPLES / "acceptance" / issue.acceptance_test).is_file(), issue.key
 
 
-def test_an_empty_repository_gets_labels_issues_and_the_overlapping_pull_request(
+def test_an_empty_repository_gets_labels_issues_and_a_linked_pull_request(
     issues: list[SeedIssue], workspace_policy: Policy
 ) -> None:
     policy = workspace_policy

@@ -11,6 +11,7 @@ import yaml
 from tests.unit.conftest import (
     ELIGIBLE,
     OWNER_LOGIN,
+    ResetsAt,
     assessment_payload,
     build_assessment,
     build_run_state,
@@ -21,12 +22,12 @@ from tests.unit.conftest import (
     issue_payload,
     limit_result,
     rejected_event,
-    usage_event,
+    window_closing_soon,
     worker_result,
     write_claude_responses,
     write_execute_policy,
     write_github_data,
-    write_probe_plan,
+    write_probe_sequence,
     write_test_policy,
     write_worker_plan,
     write_worker_stream,
@@ -178,7 +179,7 @@ def test_a_five_hour_limit_during_triage_waits_and_assesses_the_same_issue_again
 ) -> None:
     limited = {
         "stream": [
-            rejected_event("five_hour", datetime.now(UTC) + timedelta(seconds=2)),
+            rejected_event("five_hour", ResetsAt.SOON_AFTER_THE_CALL),
             limit_result("You've hit your session limit · resets 3:45pm", 0.0),
         ],
         "exit_code": 1,
@@ -584,16 +585,7 @@ def test_a_short_window_the_run_waits_out_reaches_the_pull_request(
         fake_binaries,
         claude_response(assessment_payload("execute", "XS", "tests", [], []), 0.02),
     )
-    write_probe_plan(
-        fake_binaries,
-        usage_event(
-            0.99,
-            0.10,
-            datetime.now(UTC) + timedelta(seconds=2),
-            datetime.now(UTC) + timedelta(days=2),
-        ),
-        0.001,
-    )
+    write_probe_sequence(fake_binaries, window_closing_soon(), 0.001)
     assert weekend(policy_path) == 0
     policy = policy_at(policy_path)
     run_directory = open_run_directory(policy.state_dir, latest_run_id(policy.state_dir))

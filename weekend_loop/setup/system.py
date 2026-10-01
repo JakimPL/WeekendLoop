@@ -67,7 +67,7 @@ def sandbox_steps(workspace: Workspace) -> SystemSteps:
     return SystemSteps(outcomes=[outcome], root_commands=commands)
 
 
-def socket_filter_steps() -> SystemSteps:
+def socket_filter_steps(install: bool) -> SystemSteps:
     modules = global_node_modules()
     if modules is not None and (modules / SOCKET_FILTER_PACKAGE).is_dir():
         return SystemSteps(
@@ -78,6 +78,12 @@ def socket_filter_steps() -> SystemSteps:
             outcomes=[todo(messages.SOCKET_FILTER, messages.SOCKET_FILTER_NEEDS_NPM)],
             root_commands=[],
         )
+    if not install:
+        command = shlex.join(SOCKET_FILTER_INSTALL)
+        outcome = todo(
+            messages.SOCKET_FILTER, messages.SOCKET_FILTER_MISSING.format(command=command)
+        )
+        return SystemSteps(outcomes=[outcome], root_commands=[])
     if not os.access(modules, os.W_OK):
         return SystemSteps(
             outcomes=[todo(messages.SOCKET_FILTER, messages.SANDBOX_NEEDS_ROOT)],

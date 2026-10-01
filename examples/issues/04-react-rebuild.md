@@ -5,7 +5,7 @@ labels: [refactor, "weekend:auto"]
 expected_verdict: skip
 expected_ineligibility: null
 acceptance_test: null
-overlapping_branch: null
+linked_pull_request_branch: null
 ---
 The front-end team asked if we could get Pocketchat's page onto React before it grows any bigger,
 since that's what all our other web apps use and anyone from the team could then work on it.

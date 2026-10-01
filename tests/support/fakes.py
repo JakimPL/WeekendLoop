@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weekend_loop.preflight import SOCKET_FILTER_PACKAGE
+
 FAKE_CLAUDE = """#!/usr/bin/env python3
 import json
 import os
@@ -38,7 +40,9 @@ if "--session-id" in arguments and "--no-session-persistence" not in arguments:
 
 
 def emit(message):
-    print(json.dumps(message).replace("$SESSION", session), flush=True)
+    soon = str(int(time.time()) + 2)
+    text = json.dumps(message).replace("$SESSION", session).replace('"$RESETS_SOON"', soon)
+    print(text, flush=True)
 
 
 def next_plan(path):
@@ -318,3 +322,8 @@ def install_confinement_fakes(directory: Path) -> None:
     install_fake(directory, "choom", FAKE_CHOOM)
     install_fake(directory, "taskset", FAKE_TASKSET)
     install_fake(directory, "loginctl", FAKE_LOGINCTL)
+
+
+def install_socket_filter(directory: Path) -> None:
+    install_fake(directory, "npm", FAKE_NPM)
+    (directory / "node_modules" / SOCKET_FILTER_PACKAGE).mkdir(parents=True)

@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from tests.support.fakes import FAKE_NPM, FAKE_SANDBOX_TOOL, install_fake
+from tests.support.operators import ScriptedOperator
 from tests.unit.conftest import OPERATOR_HOME, base_policy, write_github_data
 from weekend_loop.cli import EXIT_BLOCKED, EXIT_OK, EXIT_REFUSED, main
 from weekend_loop.github import GH_BINARY
@@ -28,23 +29,6 @@ CLAUDE_TOKEN: Final[str] = "sk-ant-oat01-example"
 GITHUB_TOKEN: Final[str] = "github_pat_example"
 BLOCKED: Final[int] = 3
 SECRET_MODE: Final[int] = 0o600
-
-
-class ScriptedOperator:
-    def __init__(self, secrets: list[str], agrees: bool) -> None:
-        self.can_ask = True
-        self.secrets = secrets
-        self.agrees = agrees
-        self.prompts: list[str] = []
-        self.questions: list[str] = []
-
-    def secret(self, prompt: str) -> str:
-        self.prompts.append(prompt)
-        return self.secrets.pop(0)
-
-    def agree(self, question: str) -> bool:
-        self.questions.append(question)
-        return self.agrees
 
 
 @pytest.fixture

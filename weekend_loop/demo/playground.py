@@ -12,8 +12,8 @@ SEED_GIT_DATE: Final[str] = "2026-09-14T09:00:00+00:00"
 INITIAL_COMMIT_MESSAGE: Final[str] = "Added: the Pocketchat mockup"
 GIT_BINARY: Final[str] = "git"
 EXCLUDED_FROM_SEED: Final[tuple[str, ...]] = (".git", ".venv", "__pycache__")
-OVERLAP_FILE_PATH: Final[str] = "pocketchat/static/dark-mode.css"
-OVERLAP_FILE_CONTENT: Final[str] = (
+LINKED_BRANCH_FILE_PATH: Final[str] = "pocketchat/static/dark-mode.css"
+LINKED_BRANCH_FILE_CONTENT: Final[str] = (
     "@media (prefers-color-scheme: dark) {\n"
     "  :root {\n"
     "    --page: #1A1A1A;\n"
@@ -21,7 +21,7 @@ OVERLAP_FILE_CONTENT: Final[str] = (
     "  }\n"
     "}\n"
 )
-OVERLAP_COMMIT_MESSAGE: Final[str] = "feat(page): start the dark mode"
+LINKED_BRANCH_COMMIT_MESSAGE: Final[str] = "feat(page): start the dark mode"
 
 
 def git(arguments: list[str], cwd: Path) -> str:
@@ -62,19 +62,19 @@ def commit_playground(examples: Path, staging: Path, base_branch: str) -> None:
     git(["commit", "--message", INITIAL_COMMIT_MESSAGE], cwd=staging)
 
 
-def commit_overlapping_branch(staging: Path, branch: str, base_branch: str) -> None:
+def commit_linked_branch(staging: Path, branch: str, base_branch: str) -> None:
     git(["checkout", "-b", branch], cwd=staging)
-    overlap = staging / OVERLAP_FILE_PATH
-    overlap.parent.mkdir(parents=True, exist_ok=True)
-    overlap.write_text(OVERLAP_FILE_CONTENT)
-    git(["add", OVERLAP_FILE_PATH], cwd=staging)
-    git(["commit", "--message", OVERLAP_COMMIT_MESSAGE], cwd=staging)
+    change = staging / LINKED_BRANCH_FILE_PATH
+    change.parent.mkdir(parents=True, exist_ok=True)
+    change.write_text(LINKED_BRANCH_FILE_CONTENT)
+    git(["add", LINKED_BRANCH_FILE_PATH], cwd=staging)
+    git(["commit", "--message", LINKED_BRANCH_COMMIT_MESSAGE], cwd=staging)
     git(["checkout", base_branch], cwd=staging)
 
 
 def stage_playground(
-    examples: Path, staging: Path, base_branch: str, overlapping_branches: list[str]
+    examples: Path, staging: Path, base_branch: str, linked_pull_request_branches: list[str]
 ) -> None:
     commit_playground(examples, staging, base_branch)
-    for branch in overlapping_branches:
-        commit_overlapping_branch(staging, branch, base_branch)
+    for branch in linked_pull_request_branches:
+        commit_linked_branch(staging, branch, base_branch)

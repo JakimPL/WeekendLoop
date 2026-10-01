@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -151,10 +152,18 @@ def write_secret(path: Path, value: str) -> Path:
     return path
 
 
+class ResetsAt(StrEnum):
+    SOON_AFTER_THE_CALL = "$RESETS_SOON"
+
+
+def reset_stamp(moment: datetime | ResetsAt) -> int | str:
+    return moment.value if isinstance(moment, ResetsAt) else int(moment.timestamp())
+
+
 def usage_event(
     five_hour_utilization: float,
     seven_day_utilization: float,
-    five_hour_resets_at: datetime,
+    five_hour_resets_at: datetime | ResetsAt,
     seven_day_resets_at: datetime,
 ) -> dict[str, Any]:
     return {
@@ -168,7 +177,7 @@ def usage_event(
             "unifiedWindows": {
                 "five_hour": {
                     "utilization": five_hour_utilization,
-                    "resetsAt": int(five_hour_resets_at.timestamp()),
+                    "resetsAt": reset_stamp(five_hour_resets_at),
                 },
                 "seven_day": {
                     "utilization": seven_day_utilization,
@@ -180,10 +189,10 @@ def usage_event(
 
 
 # Limit shapes read from the claude 2.1.276 binary and docs; no real limit hit has been captured.
-def rejected_event(rate_limit_type: str, resets_at: datetime | None) -> dict[str, Any]:
+def rejected_event(rate_limit_type: str, resets_at: datetime | ResetsAt | None) -> dict[str, Any]:
     info: dict[str, Any] = {"status": "rejected", "rateLimitType": rate_limit_type}
     if resets_at is not None:
-        info["resetsAt"] = int(resets_at.timestamp())
+        info["resetsAt"] = reset_stamp(resets_at)
     return {"type": "rate_limit_event", "rate_limit_info": info}
 
 
@@ -215,8 +224,8 @@ def error_result(
     }
 
 
-def write_probe_plan(directory: Path, usage: dict[str, Any] | None, cost_usd: float) -> None:
-    plan = {
+def probe_plan(usage: dict[str, Any] | None, cost_usd: float) -> dict[str, Any]:
+    return {
         "stream": [
             *([] if usage is None else [usage]),
             {
@@ -230,7 +239,24 @@ def write_probe_plan(directory: Path, usage: dict[str, Any] | None, cost_usd: fl
         ],
         "exit_code": 0,
     }
-    (directory / "claude-probe.json").write_text(json.dumps(plan))
+
+
+def write_probe_plan(directory: Path, usage: dict[str, Any] | None, cost_usd: float) -> None:
+    (directory / "claude-probe.json").write_text(json.dumps(probe_plan(usage, cost_usd)))
+
+
+def write_probe_sequence(
+    directory: Path, usages: list[dict[str, Any] | None], cost_usd: float
+) -> None:
+    plans = [probe_plan(usage, cost_usd) for usage in usages]
+    (directory / "claude-probe.json").write_text(json.dumps(plans))
+
+
+def window_closing_soon() -> list[dict[str, Any] | None]:
+    week = datetime.now(UTC) + timedelta(days=2)
+    closing = usage_event(0.99, 0.10, ResetsAt.SOON_AFTER_THE_CALL, week)
+    reopened = usage_event(0.0, 0.10, datetime.now(UTC) + timedelta(hours=5), week)
+    return [closing, closing, reopened]
 
 
 def worker_plan(

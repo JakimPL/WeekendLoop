@@ -5,7 +5,7 @@ labels: [documentation, "weekend:auto"]
 expected_verdict: execute
 expected_ineligibility: null
 acceptance_test: test_readme.py
-overlapping_branch: null
+linked_pull_request_branch: null
 ---
 Two sections in the README ("How to run it" and "How to use it") just say TODO, and new people keep
 pinging me to ask how to start the thing. Can someone fill them in? Running it should have the actual

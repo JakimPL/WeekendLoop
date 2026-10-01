@@ -77,10 +77,10 @@ def test_an_empty_repository_receives_the_mockup_once(tmp_path: Path) -> None:
     assert ".venv" not in {path.split("/")[0] for path in tracked}
     overlap = git(["diff", "--name-only", "main", "feat/dark-mode"], cwd=remote).split()
     assert overlap == ["pocketchat/static/dark-mode.css"]
-    assert "already carries the mockup" in publish_playground(context)
+    assert "already has main, feat/dark-mode" in publish_playground(context)
 
 
-def test_a_missing_colleague_branch_is_pushed_on_its_own(tmp_path: Path) -> None:
+def test_a_missing_linked_branch_is_pushed_on_its_own(tmp_path: Path) -> None:
     remote = empty_remote(tmp_path)
     context = context_for(tmp_path, str(remote))
     publish_playground(context)
@@ -149,10 +149,13 @@ def test_the_seed_summary_says_what_changed() -> None:
     )
     tests = {"2": "pilot/acceptance/test_readme.py", "1": "pilot/acceptance/test_new_chat.py"}
     assert seed_summary(fresh, tests) == (
-        "created 2 of 2 issues, opened 1 colleague draft pull request(s), hidden tests for #1, #2"
+        "created 2 of 2 issues, opened a draft pull request on feat/dark-mode, "
+        "hidden tests for #1, #2"
     )
     again = fresh.model_copy(update={"created_issues": [], "opened_pull_requests": []})
-    assert seed_summary(again, tests).startswith("all 2 issues were there, opened 0")
+    assert seed_summary(again, tests).startswith(
+        "all 2 issues were there, the draft pull requests on the linked branches were there"
+    )
 
 
 def test_seeding_without_a_token_asks_the_operator_for_one(tmp_path: Path) -> None:

@@ -38,12 +38,12 @@ def open_items(outcomes: list[StepOutcome]) -> int:
     return sum(1 for outcome in outcomes if outcome.mark is not Mark.DONE)
 
 
-def closing_line(outcomes: list[StepOutcome], next_run: str | None) -> str:
+def closing_line(outcomes: list[StepOutcome], next_run: str | None, command: str) -> str:
     left = open_items(outcomes)
     if left == 1:
-        return messages.LEFT_ONE
+        return messages.LEFT_ONE.format(command=command)
     if left > 1:
-        return messages.LEFT_MANY.format(count=left)
+        return messages.LEFT_MANY.format(count=left, command=command)
     return messages.READY if next_run is None else messages.READY_NEXT.format(next=next_run)
 
 

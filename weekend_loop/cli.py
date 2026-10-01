@@ -18,9 +18,18 @@ from weekend_loop.agreement import (
 from weekend_loop.backends import board_operator_login, reader_for, writer_for
 from weekend_loop.config_errors import ConfigError
 from weekend_loop.config_view import default_keys, reference_document, resolved_document
-from weekend_loop.demo.board import build_demo, planned_demo, render_demo
+from weekend_loop.demo import messages as demo_messages
+from weekend_loop.demo.board import DRYRUN_DIRECTORY_NAME
+from weekend_loop.demo.lifecycle import (
+    DemoRefusalError,
+    demo_environment,
+    demo_remove,
+    demo_reset,
+    demo_up,
+)
+from weekend_loop.demo.marker import is_demo, write_marker
 from weekend_loop.demo.publish import publish_demo
-from weekend_loop.demo.seed import DEFAULT_EXAMPLES
+from weekend_loop.demo.seed import DEFAULT_EXAMPLES, GITHUB_REPO_KEY, LOCAL_REPO_KEY
 from weekend_loop.execute import execute_run
 from weekend_loop.fences import NO_FORBIDDEN_PATHS, render_fences
 from weekend_loop.github import reader_for as github_reader_for
@@ -78,7 +87,7 @@ from weekend_loop.setup.outcomes import (
     render_outcome,
     render_root_block,
 )
-from weekend_loop.setup.steps import run_setup, schedule_status, schedule_step
+from weekend_loop.setup.steps import SetupResult, run_setup, schedule_status, schedule_step
 from weekend_loop.setup.timers import (
     cli_binary,
     installed_timers,
@@ -107,11 +116,18 @@ from weekend_loop.systemd_units import (
 from weekend_loop.triage import eligible_issues, finish_triage, prefilter_issues, triage
 from weekend_loop.watch import WATCH_POLL_SECONDS, follow_run
 from weekend_loop.web.application import DEFAULT_HOST, DEFAULT_PORT, serve
-from weekend_loop.workspace import WorkspaceError, home_directory, open_workspace
+from weekend_loop.workspace import (
+    WorkspaceError,
+    demo_home_directory,
+    home_directory,
+    open_workspace,
+)
 from weekend_loop.workspace_init import initialise_workspace
 
 DEMO_UP: Final[str] = "up"
+DEMO_ENV: Final[str] = "env"
 DEMO_RESET: Final[str] = "reset"
+DEMO_REMOVE: Final[str] = "remove"
 DEMO_PUBLISH: Final[str] = "publish"
 MISSING_EXAMPLES_TEMPLATE: Final[str] = (
     "no example project at {examples}; run this from a Weekend Loop checkout "
@@ -128,11 +144,9 @@ SCHEDULE_OFF: Final[str] = "off"
 SCHEDULE_STATUS: Final[str] = "status"
 DEMO_READY_TEMPLATE: Final[str] = (
     "workspace ready at {root}, configured for the example\n"
-    "save a Claude token to {secret}, then:\n"
-    "  weekend-loop demo up --repo-key demo --home {root}"
+    "`weekend-loop demo up --home {root}` builds the board"
 )
 DEFAULT_ISSUE_LIMIT: Final[int] = 200
-DRYRUN_DIRECTORY_NAME: Final[str] = "dryrun"
 LABELS_FILENAME_TEMPLATE: Final[str] = "{repo_key}-labels.csv"
 LABEL_REFUSED_TEMPLATE: Final[str] = "GitHub refused the label {label}: {reason}"
 AGREEMENT_FILENAME: Final[str] = "agreement.json"
@@ -171,21 +185,56 @@ def command_config(options: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def command_demo(options: argparse.Namespace) -> int:
-    policy = prepared_policy(options)
-    examples = options.example.resolve()
+def demo_result(result: SetupResult) -> int:
+    for line in render_root_block(result.root_commands):
+        print(line)
+    print()
+    print(closing_line(result.outcomes, None, demo_messages.UP_COMMAND))
+    if open_items(result.outcomes) > 0:
+        return EXIT_BLOCKED
+    print(demo_messages.NEXT)
+    return EXIT_OK
+
+
+def existing_examples(options: argparse.Namespace) -> Path | None:
+    examples: Path = options.example.resolve()
     if not examples.is_dir():
         print(MISSING_EXAMPLES_TEMPLATE.format(examples=examples), file=sys.stderr)
-        return EXIT_REFUSED
-    if options.demo_command == DEMO_PUBLISH:
-        return publish_demo(examples, policy, options.repo_key, sys.stdin.isatty())
-    reset = options.demo_command == DEMO_RESET
-    if options.dry_run:
-        outcome = planned_demo(examples, policy, options.repo_key, reset)
-        print(render_demo(outcome, planned=True))
+        return None
+    return examples
+
+
+def demo_action(options: argparse.Namespace, root: Path) -> int:
+    command: str = options.demo_command
+    repo_key: str = options.repo_key or LOCAL_REPO_KEY
+    operator = TerminalOperator(can_ask=sys.stdin.isatty(), assume_yes=options.yes)
+    if command == DEMO_ENV:
+        print("\n".join(demo_environment(root, repo_key)))
         return EXIT_OK
-    print(render_demo(build_demo(examples, policy, options.repo_key, reset), planned=False))
-    return EXIT_OK
+    if command == DEMO_REMOVE:
+        if not operator.can_ask and not options.yes:
+            print(demo_messages.REMOVE_NEEDS_TERMINAL, file=sys.stderr)
+            return EXIT_REFUSED
+        print(demo_remove(root, operator, Path.home()))
+        return EXIT_OK
+    examples = existing_examples(options)
+    if examples is None:
+        return EXIT_REFUSED
+    if command == DEMO_PUBLISH:
+        policy = load_policy(open_workspace(root))
+        key = options.repo_key or GITHUB_REPO_KEY
+        return publish_demo(examples, policy, key, sys.stdin.isatty())
+    act = demo_reset if command == DEMO_RESET else demo_up
+    return demo_result(act(root, examples, repo_key, operator, datetime.now(UTC), print))
+
+
+def command_demo(options: argparse.Namespace) -> int:
+    root = demo_home_directory(options.home, os.environ, Path.home())
+    try:
+        return demo_action(options, root)
+    except DemoRefusalError as refusal:
+        print(refusal, file=sys.stderr)
+        return EXIT_REFUSED
 
 
 def command_labels(options: argparse.Namespace) -> int:
@@ -215,11 +264,17 @@ def command_init(options: argparse.Namespace) -> int:
     if example is not None and not example.is_dir():
         print(MISSING_EXAMPLES_TEMPLATE.format(examples=example), file=sys.stderr)
         return EXIT_REFUSED
-    for path in initialise_workspace(root, Path.home(), options.force, example):
-        print(f"wrote {path}")
     workspace = Workspace(root=root)
+    if example is not None and workspace.config_path.is_file() and not is_demo(workspace):
+        print(demo_messages.WORKSPACE_OF_YOUR_OWN.format(root=root), file=sys.stderr)
+        return EXIT_REFUSED
+    written = initialise_workspace(root, Path.home(), options.force, example)
+    for path in written:
+        print(f"wrote {path}")
+    if example is not None and workspace.config_path in written:
+        write_marker(workspace, example, datetime.now(UTC))
     if example is not None:
-        print(DEMO_READY_TEMPLATE.format(root=root, secret=workspace.oauth_token_path))
+        print(DEMO_READY_TEMPLATE.format(root=root))
     else:
         print(READY_TEMPLATE.format(root=root, config=workspace.config_path))
     return EXIT_OK
@@ -293,12 +348,16 @@ def command_setup(options: argparse.Namespace) -> int:
     for line in render_root_block(result.root_commands):
         print(line)
     print()
-    print(closing_line(result.outcomes, result.next_run))
+    print(closing_line(result.outcomes, result.next_run, setup_messages.SETUP_COMMAND))
     return EXIT_OK if open_items(result.outcomes) == 0 else EXIT_BLOCKED
 
 
 def command_schedule(options: argparse.Namespace) -> int:
-    policy = load_policy(workspace_of(options))
+    workspace = workspace_of(options)
+    if is_demo(workspace):
+        print(setup_messages.SCHEDULE_DEMO_REFUSED, file=sys.stderr)
+        return EXIT_REFUSED
+    policy = load_policy(workspace)
     if not user_manager_running():
         print(setup_messages.NO_SYSTEMD)
         return EXIT_BLOCKED
@@ -680,12 +739,13 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         "--force", action="store_true", help="rewrite the files Weekend Loop generates"
     )
 
-    demo = subparsers.add_parser("demo", help="build, reset or publish the example board")
-    demo.add_argument("demo_command", choices=[DEMO_UP, DEMO_RESET, DEMO_PUBLISH])
-    demo.add_argument("--repo-key", required=True)
+    demo = subparsers.add_parser("demo", help="set up, reset or remove the example, or publish it")
+    demo.add_argument(
+        "demo_command", choices=[DEMO_UP, DEMO_ENV, DEMO_RESET, DEMO_REMOVE, DEMO_PUBLISH]
+    )
+    demo.add_argument("--repo-key")
     demo.add_argument("--example", type=Path, default=DEFAULT_EXAMPLES)
-    demo.add_argument("--dry-run", action="store_true", help="print the plan and write nothing")
-
+    demo.add_argument("--yes", action="store_true", help="remove without asking")
     labels = subparsers.add_parser("labels", help="create the weekend labels on a repository")
     labels.add_argument("--repo-key", required=True)
     labels.add_argument("--dry-run", action="store_true", help="print the commands and run none")

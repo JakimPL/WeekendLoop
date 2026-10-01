@@ -42,7 +42,10 @@ GITHUB_REPO_KEY: Final[str] = "demo-github"
 ISSUE_LIST_LIMIT: Final[int] = 200
 FRONT_MATTER_DELIMITER: Final[str] = "---"
 ISSUE_URL_PATTERN: Final[re.Pattern[str]] = re.compile(r"/issues/(\d+)\s*$")
-OVERLAP_PULL_REQUEST_TITLE: Final[str] = "feat(page): dark mode (work in progress, #{issue_number})"
+LINKED_PULL_REQUEST_TITLE: Final[str] = "feat(page): dark mode (work in progress, #{issue_number})"
+LINKED_PULL_REQUEST_BODY: Final[str] = (
+    "Work in progress on the dark mode.\n\nCloses #{issue_number}"
+)
 EXAMPLE_LABEL_COLOUR: Final[str] = "C5DEF5"
 EXAMPLE_LABELS: Final[tuple[tuple[str, str], ...]] = (
     ("refactor", "Restructures the code and keeps what it does"),
@@ -58,7 +61,7 @@ class SeedIssue(BaseModel):
     expected_verdict: Verdict | None
     expected_ineligibility: IneligibilityReason | None
     acceptance_test: Path | None
-    overlapping_branch: str | None
+    linked_pull_request_branch: str | None
     body: str
 
 
@@ -154,7 +157,7 @@ def pull_request_exists(commands: GhCommands, slug: str, branch: str) -> bool:
     return bool(json.loads(output or "[]"))
 
 
-def open_overlapping_pull_request(
+def open_linked_pull_request(
     commands: GhCommands, repo: RepoTarget, branch: str, issue_number: int
 ) -> None:
     commands.run(
@@ -169,19 +172,19 @@ def open_overlapping_pull_request(
             "--base",
             repo.base_branch,
             "--title",
-            OVERLAP_PULL_REQUEST_TITLE.format(issue_number=issue_number),
+            LINKED_PULL_REQUEST_TITLE.format(issue_number=issue_number),
             "--body",
-            f"Work in progress by a human colleague.\n\nCloses #{issue_number}",
+            LINKED_PULL_REQUEST_BODY.format(issue_number=issue_number),
         ]
     )
 
 
-def ensure_overlapping_pull_request(
+def ensure_linked_pull_request(
     commands: GhCommands, repo: RepoTarget, branch: str, issue_number: int
 ) -> bool:
     if pull_request_exists(commands, repo.slug, branch):
         return False
-    open_overlapping_pull_request(commands, repo, branch, issue_number)
+    open_linked_pull_request(commands, repo, branch, issue_number)
     return True
 
 
@@ -200,15 +203,15 @@ def ensure_issues(
     return issue_numbers, created
 
 
-def ensure_overlapping_pull_requests(
+def ensure_linked_pull_requests(
     commands: GhCommands, repo: RepoTarget, issues: list[SeedIssue], issue_numbers: dict[str, int]
 ) -> list[str]:
     return [
-        issue.overlapping_branch
+        issue.linked_pull_request_branch
         for issue in issues
-        if issue.overlapping_branch is not None
-        and ensure_overlapping_pull_request(
-            commands, repo, issue.overlapping_branch, issue_numbers[issue.key]
+        if issue.linked_pull_request_branch is not None
+        and ensure_linked_pull_request(
+            commands, repo, issue.linked_pull_request_branch, issue_numbers[issue.key]
         )
     ]
 
@@ -222,14 +225,16 @@ def seed_repository(
     return SeedOutcome(
         issue_numbers=issue_numbers,
         created_issues=created_issues,
-        opened_pull_requests=ensure_overlapping_pull_requests(
-            commands, repo, issues, issue_numbers
-        ),
+        opened_pull_requests=ensure_linked_pull_requests(commands, repo, issues, issue_numbers),
     )
 
 
-def overlapping_branches(issues: list[SeedIssue]) -> list[str]:
-    return [issue.overlapping_branch for issue in issues if issue.overlapping_branch is not None]
+def linked_pull_request_branches(issues: list[SeedIssue]) -> list[str]:
+    return [
+        issue.linked_pull_request_branch
+        for issue in issues
+        if issue.linked_pull_request_branch is not None
+    ]
 
 
 def acceptance_map(issues: list[SeedIssue], issue_numbers: dict[str, int]) -> dict[str, str]:

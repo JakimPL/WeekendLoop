@@ -43,6 +43,7 @@ SOCKET_FILTER: Final[str] = "socket filter"
 SOCKET_FILTER_READY: Final[str] = "installed"
 SOCKET_FILTER_INSTALLED: Final[str] = "installed now"
 SOCKET_FILTER_NEEDS_NPM: Final[str] = "needs npm; install Node.js, then run setup again"
+SOCKET_FILTER_MISSING: Final[str] = "not installed; `{command}` installs it"
 SOCKET_FILTER_FAILED: Final[str] = "npm could not install it: {reason}"
 
 SCHEDULE: Final[str] = "schedule"
@@ -51,6 +52,10 @@ SCHEDULE_ON_WHILE_LOGGED_IN: Final[str] = (
     "on, but runs start only while you are logged in: {reason}"
 )
 SCHEDULE_LEFT: Final[str] = "left as it is"
+SCHEDULE_DEMO: Final[str] = "off; the example runs by hand"
+SCHEDULE_DEMO_REFUSED: Final[str] = (
+    "The example runs by hand; `weekend-loop schedule` serves your own workspace."
+)
 SCHEDULE_NO_SYSTEMD: Final[str] = (
     "no systemd user session here; schedule with `weekend-loop crontab | crontab -` instead"
 )
@@ -67,8 +72,9 @@ PREFLIGHT_AFTER_ITEMS: Final[str] = "clear once the items above are done"
 ROOT_HEADER: Final[str] = "Run these once as root, then run setup again:"
 READY: Final[str] = "Ready."
 READY_NEXT: Final[str] = "Ready. The next run starts {next}."
-LEFT_ONE: Final[str] = "1 thing is left; run setup again once it is done."
-LEFT_MANY: Final[str] = "{count} things are left; run setup again once they are done."
+SETUP_COMMAND: Final[str] = "setup"
+LEFT_ONE: Final[str] = "1 thing is left; run {command} again once it is done."
+LEFT_MANY: Final[str] = "{count} things are left; run {command} again once they are done."
 NO_ANSWER: Final[str] = "no answer"
 
 RUNS_ON: Final[str] = "Runs are on."

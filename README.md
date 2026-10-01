@@ -30,19 +30,23 @@ While the repository is private, git asks for your GitHub username and a persona
 
 ## Try the example first
 
-The example is a small weekend run on a board stored on your disk. You need no GitHub account:
+The example is a small weekend run on a Pocketchat board kept on your disk. It runs the real
+assistant and needs no GitHub account. From a checkout of this repository:
 
 ```
-weekend-loop init --demo --home ~/.weekend-loop-demo
-weekend-loop --home ~/.weekend-loop-demo demo up --repo-key demo
-weekend-loop --home ~/.weekend-loop-demo setup --no-schedule
-weekend-loop --home ~/.weekend-loop-demo weekend --repo-key demo --ignore-window
+weekend-loop demo up
+eval "$(weekend-loop demo env)"
+weekend-loop weekend --ignore-window
 ```
 
-`setup` asks for your Claude token: run `claude setup-token` in another terminal and paste the line
-it prints after "Your OAuth token". You get a draft pull request or two, one issue with a question,
-one issue skipped as too large, and three issues left alone for reasons the digest explains.
-[docs/demo.md](docs/demo.md) describes what each of the seven issues tests.
+`demo up` builds the example in `~/.weekend-loop-demo` and asks for your Claude token: run
+`claude setup-token` in another terminal and paste the line it prints after "Your OAuth token".
+`demo env` points `weekend-loop` and `gh` at the example in that terminal, so `gh issue list` and
+`gh pr diff` show its board. You get a draft pull request or two, one issue with a question, one
+issue skipped as too large, and three issues left alone for reasons the digest explains.
+
+`weekend-loop demo reset` starts the example over, and `weekend-loop demo remove` deletes it.
+[docs/demo.md](docs/demo.md) describes what each issue tests.
 
 ## Set it up for your repository
 

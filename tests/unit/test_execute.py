@@ -17,11 +17,13 @@ from tests.unit.conftest import (
     delivery_payload,
     issue_payload,
     usage_event,
+    window_closing_soon,
     worker_plan,
     worker_result,
     write_execute_policy,
     write_github_data,
     write_probe_plan,
+    write_probe_sequence,
     write_worker_plan,
 )
 from tests.unit.test_prefilter import build_issue
@@ -675,16 +677,7 @@ def test_a_short_window_about_to_reset_is_waited_out_and_the_task_still_runs(
         3,
         [1],
     )
-    write_probe_plan(
-        fake_binaries,
-        usage_event(
-            0.99,
-            0.10,
-            datetime.now(UTC) + timedelta(seconds=2),
-            datetime.now(UTC) + timedelta(days=2),
-        ),
-        0.001,
-    )
+    write_probe_sequence(fake_binaries, window_closing_soon(), 0.001)
     assert execute(policy_path) == 0
     state = load_run_state(open_run_directory(policy.state_dir, RUN_ID))
     assert state.tasks[0].branch is not None

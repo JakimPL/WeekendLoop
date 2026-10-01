@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from weekend_loop.config_view import EXAMPLE_EMAIL, EXAMPLE_SLUG
+from weekend_loop.demo.marker import is_demo
 from weekend_loop.fences import NO_FORBIDDEN_PATHS, render_fences
 from weekend_loop.github import reader_for
 from weekend_loop.labels import create_labels, label_commands
@@ -44,6 +45,7 @@ from weekend_loop.workspace import open_workspace
 from weekend_loop.workspace_init import initialise_workspace
 
 type Echo = Callable[[str], None]
+type Coverage = dict[str, set[str]]
 
 
 class SetupResult(Record):
@@ -101,9 +103,8 @@ def schedule_step(
     return done(messages.SCHEDULE, messages.SCHEDULE_ON.format(next=next_run)), next_run
 
 
-def checks_reported(repo_key: str, repo: RepoTarget, outcomes: list[StepOutcome]) -> set[str]:
-    open_steps = {outcome.name for outcome in outcomes if outcome.mark is not Mark.DONE}
-    covered = {
+def step_coverage(repo_key: str, repo: RepoTarget) -> Coverage:
+    return {
         messages.CLAUDE_TOKEN: {CLAUDE_TOKEN_CHECK},
         messages.GITHUB_TOKEN: {
             GITHUB_TOKEN_CHECK_TEMPLATE.format(repo_key=repo_key),
@@ -115,7 +116,11 @@ def checks_reported(repo_key: str, repo: RepoTarget, outcomes: list[StepOutcome]
             *(SANDBOX_BINARY_CHECK_TEMPLATE.format(binary=binary) for binary in SANDBOX_BINARIES),
         },
     }
-    return {check for step, checks in covered.items() if step in open_steps for check in checks}
+
+
+def checks_reported(coverage: Coverage, outcomes: list[StepOutcome]) -> set[str]:
+    open_steps = {outcome.name for outcome in outcomes if outcome.mark is not Mark.DONE}
+    return {check for step, checks in coverage.items() if step in open_steps for check in checks}
 
 
 def preflight_step(policy: Policy, repo_key: str, now: datetime, reported: set[str]) -> StepOutcome:
@@ -191,9 +196,10 @@ def run_setup(
         config = policy.workspace.config_path
         run.record(todo(messages.WORKSPACE, messages.DESCRIBE_REPOSITORY.format(config=config)))
         return run.result(None, False)
-    if not operator.agree(confirmation(policy, repo, schedule, now)):
+    scheduled = schedule and not is_demo(policy.workspace)
+    if not operator.agree(confirmation(policy, repo, scheduled, now)):
         return run.result(None, True)
-    return set_up(policy, key, repo, schedule, operator, blocked_exit_status, now, run)
+    return set_up(policy, key, repo, scheduled, operator, blocked_exit_status, now, run)
 
 
 def set_up(
@@ -213,7 +219,7 @@ def set_up(
     else:
         run.record(todo(messages.LABELS, messages.LABELS_WAIT))
     render_fences(policy.workspace, Path.home(), NO_FORBIDDEN_PATHS)
-    for steps in (sandbox_steps(policy.workspace), socket_filter_steps()):
+    for steps in (sandbox_steps(policy.workspace), socket_filter_steps(True)):
         for outcome in steps.outcomes:
             run.record(outcome)
         run.root_commands.extend(steps.root_commands)
@@ -222,8 +228,9 @@ def set_up(
         outcome, next_run = schedule_step(policy, now, blocked_exit_status)
         run.record(outcome)
     else:
-        run.record(done(messages.SCHEDULE, messages.SCHEDULE_LEFT))
-    reported = checks_reported(repo_key, repo, run.outcomes)
+        left = messages.SCHEDULE_DEMO if is_demo(policy.workspace) else messages.SCHEDULE_LEFT
+        run.record(done(messages.SCHEDULE, left))
+    reported = checks_reported(step_coverage(repo_key, repo), run.outcomes)
     run.record(preflight_step(policy, repo_key, now, reported))
     return run.result(next_run, False)
 

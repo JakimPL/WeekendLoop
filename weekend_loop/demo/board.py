@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Final
 
 from weekend_loop.acceptance import acceptance_map_path
-from weekend_loop.briefing import prepared_path
+from weekend_loop.briefing import briefing_directory, prepared_path
 from weekend_loop.demo.playground import OWNER_LOGIN
 from weekend_loop.demo.publish import SetupContext, publish_playground
 from weekend_loop.demo.seed import (
@@ -31,11 +31,14 @@ from weekend_loop.models import (
     Workspace,
 )
 from weekend_loop.policy import repo_target
+from weekend_loop.preflight import PREFLIGHT_FILENAME_TEMPLATE
 from weekend_loop.runs import RUNS_DIRECTORY_NAME, ledger_path
 from weekend_loop.setup.tokens import save_secret
 from weekend_loop.workbench import clone_url
 
 BOARD_TOKEN: Final[str] = "local-board"
+DRYRUN_DIRECTORY_NAME: Final[str] = "dryrun"
+ACCEPTANCE_TEST_PATTERN: Final[str] = "test_*.py"
 
 
 def prepare_local_board(policy: Policy, repo: RepoTarget) -> None:
@@ -51,14 +54,20 @@ def prepare_local_board(policy: Policy, repo: RepoTarget) -> None:
 
 
 def removable_paths(policy: Policy, repo: RepoTarget, repo_key: str) -> list[Path]:
+    state = policy.state_dir
+    workspace = policy.workspace
     return [
-        repository_directory(board_root(policy.state_dir), repo.slug),
-        policy.workspace.workbench_path(repo_key),
-        policy.workspace.worktrees_path(repo_key),
-        policy.state_dir / RUNS_DIRECTORY_NAME,
-        acceptance_map_path(policy.state_dir),
-        ledger_path(policy.state_dir),
-        prepared_path(policy.state_dir, repo_key),
+        repository_directory(board_root(state), repo.slug),
+        workspace.workbench_path(repo_key),
+        workspace.worktrees_path(repo_key),
+        state / RUNS_DIRECTORY_NAME,
+        acceptance_map_path(state),
+        ledger_path(state),
+        prepared_path(state, repo_key),
+        briefing_directory(state, repo_key),
+        state / PREFLIGHT_FILENAME_TEMPLATE.format(repo_key=repo_key),
+        state / DRYRUN_DIRECTORY_NAME,
+        *sorted(workspace.acceptance_dir.glob(ACCEPTANCE_TEST_PATTERN)),
     ]
 
 
@@ -75,8 +84,8 @@ def remove(paths: list[Path]) -> list[Path]:
 
 
 class DemoOutcome(Record):
-    removed: list[Path]
     issue_numbers: dict[str, int]
+    linked_issue_numbers: list[int]
     acceptance_tests: dict[str, str]
 
 
@@ -85,16 +94,15 @@ def copy_acceptance_tests(examples: Path, workspace: Workspace) -> None:
     if not source.is_dir():
         return
     workspace.acceptance_dir.mkdir(parents=True, exist_ok=True)
-    for test in sorted(source.glob("test_*.py")):
+    for test in sorted(source.glob(ACCEPTANCE_TEST_PATTERN)):
         shutil.copy2(test, workspace.acceptance_dir / test.name)
 
 
-def build_demo(examples: Path, policy: Policy, repo_key: str, reset: bool) -> DemoOutcome:
+def build_demo(examples: Path, policy: Policy, repo_key: str) -> DemoOutcome:
     repo = repo_target(policy, repo_key)
     if repo.backend is not Backend.LOCAL:
         raise ValueError(f"repository {repo_key!r} does not keep its board on disk")
     issues = load_seed_issues(issues_directory(examples))
-    removed = remove(removable_paths(policy, repo, repo_key)) if reset else []
     prepare_local_board(policy, repo)
     remote = clone_url(repo, policy.state_dir)
     publish_playground(SetupContext(policy, repo_key, repo, remote, examples))
@@ -102,26 +110,11 @@ def build_demo(examples: Path, policy: Policy, repo_key: str, reset: bool) -> De
     copy_acceptance_tests(examples, policy.workspace)
     tests = acceptance_map(issues, outcome.issue_numbers)
     write_acceptance_map(policy.state_dir, tests)
-    return DemoOutcome(removed=removed, issue_numbers=outcome.issue_numbers, acceptance_tests=tests)
-
-
-def planned_demo(examples: Path, policy: Policy, repo_key: str, reset: bool) -> DemoOutcome:
-    repo = repo_target(policy, repo_key)
-    issues = load_seed_issues(issues_directory(examples))
-    removed = removable_paths(policy, repo, repo_key) if reset else []
-    numbers = {issue.key: number for number, issue in enumerate(issues, start=1)}
+    linked = [
+        outcome.issue_numbers[issue.key]
+        for issue in issues
+        if issue.linked_pull_request_branch is not None
+    ]
     return DemoOutcome(
-        removed=removed, issue_numbers=numbers, acceptance_tests=acceptance_map(issues, numbers)
+        issue_numbers=outcome.issue_numbers, linked_issue_numbers=linked, acceptance_tests=tests
     )
-
-
-def render_demo(outcome: DemoOutcome, planned: bool) -> str:
-    lines = [f"{'would remove' if planned else 'removed'} {path}" for path in outcome.removed]
-    lines.extend(
-        f"{'would seed' if planned else 'seeded'} #{number} {key}"
-        for key, number in outcome.issue_numbers.items()
-    )
-    lines.extend(
-        f"hidden test for #{number}: {test}" for number, test in outcome.acceptance_tests.items()
-    )
-    return "\n".join(lines)

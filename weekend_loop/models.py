@@ -30,6 +30,7 @@ WORKTREES_SUFFIX: Final[str] = "-worktrees"
 STATE_DIRECTORY_NAME: Final[str] = "state"
 SYSTEM_DIRECTORY_NAME: Final[str] = "system"
 APPARMOR_PROFILE_NAME: Final[str] = "bwrap.apparmor"
+DEMO_MARKER_NAME: Final[str] = "demo.json"
 CLAUDE_DIRECTORY_NAME: Final[str] = ".claude"
 WORKER_FENCE_NAME: Final[str] = "settings.json"
 ASSESSOR_FENCE_NAME: Final[str] = "assessor.settings.json"
@@ -409,6 +410,11 @@ class BoardIndex(Record):
 
 class BoardAccount(Record):
     login: str
+
+
+class DemoMarker(Record):
+    created_at: datetime
+    examples: Path
 
 
 class SpecSignals(Record):
@@ -1003,6 +1009,10 @@ class Workspace(Record):
     @property
     def apparmor_profile_path(self) -> Path:
         return self.root / SYSTEM_DIRECTORY_NAME / APPARMOR_PROFILE_NAME
+
+    @property
+    def demo_marker_path(self) -> Path:
+        return self.root / DEMO_MARKER_NAME
 
     @property
     def oauth_token_path(self) -> Path:
