@@ -145,6 +145,8 @@ elif arguments[:1] == ["api"] and arguments[1].startswith("repos/"):
         print(json.dumps({"message": "Not Found", "status": data["read_status"]}))
         raise SystemExit(1)
     print(json.dumps(data["push"]))
+elif arguments[:2] == ["label", "create"]:
+    print(f"label {arguments[2]} created")
 elif arguments[:2] == ["pr", "list"]:
     print(json.dumps(data["pull_requests"]))
 elif arguments[:2] == ["issue", "list"]:
@@ -216,9 +218,45 @@ here = Path(__file__).resolve().parent
 arguments = sys.argv[1:]
 with (here / "systemctl-calls.jsonl").open("a") as log:
     log.write(json.dumps(arguments) + "\\n")
-if "show" in arguments and "Result" in arguments:
+if (here / "systemctl-absent").is_file():
+    print("Failed to connect to bus: No medium found", file=sys.stderr)
+    raise SystemExit(1)
+state = here / "systemctl-enabled.json"
+enabled = set(json.loads(state.read_text())) if state.is_file() else set()
+verb = arguments[1] if len(arguments) > 1 else ""
+names = [argument for argument in arguments[2:] if not argument.startswith("-")]
+if verb == "show" and "Result" in arguments:
     result = here / "systemctl-result.txt"
     print(result.read_text().strip() if result.is_file() else "success")
+elif verb == "enable":
+    state.write_text(json.dumps(sorted(enabled | set(names))))
+elif verb == "disable":
+    state.write_text(json.dumps(sorted(enabled - set(names))))
+elif verb == "is-enabled":
+    print("enabled" if names[0] in enabled else "disabled")
+    raise SystemExit(0 if names[0] in enabled else 1)
+elif verb == "is-active":
+    print("inactive")
+    raise SystemExit(3)
+"""
+
+FAKE_LOGINCTL = """#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+here = Path(__file__).resolve().parent
+arguments = sys.argv[1:]
+with (here / "loginctl-calls.jsonl").open("a") as log:
+    log.write(json.dumps(arguments) + "\\n")
+lingering = here / "loginctl-linger.txt"
+if arguments[0] == "show-user":
+    print("yes" if lingering.is_file() else "no")
+elif arguments[0] == "enable-linger":
+    if (here / "loginctl-refuses").is_file():
+        print("Could not enable linger: Access denied", file=sys.stderr)
+        raise SystemExit(1)
+    lingering.write_text("yes")
 """
 
 FAKE_CHOOM = """#!/usr/bin/env python3
@@ -245,6 +283,21 @@ os.execvp(command[0], command)
 """
 
 
+FAKE_NPM = """#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+here = Path(__file__).resolve().parent
+arguments = sys.argv[1:]
+modules = here / "node_modules"
+modules.mkdir(exist_ok=True)
+if arguments[:2] == ["root", "-g"]:
+    print(modules)
+elif arguments[:2] == ["install", "-g"]:
+    (modules / arguments[2]).mkdir(parents=True, exist_ok=True)
+"""
+
+
 def install_fake(directory: Path, name: str, script: str) -> Path:
     path = directory / name
     path.write_text(script)
@@ -257,3 +310,4 @@ def install_confinement_fakes(directory: Path) -> None:
     install_fake(directory, "systemctl", FAKE_SYSTEMCTL)
     install_fake(directory, "choom", FAKE_CHOOM)
     install_fake(directory, "taskset", FAKE_TASKSET)
+    install_fake(directory, "loginctl", FAKE_LOGINCTL)

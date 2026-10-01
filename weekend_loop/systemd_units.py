@@ -1,4 +1,3 @@
-import shlex
 from pathlib import Path
 from typing import Final
 
@@ -188,45 +187,6 @@ def render_systemd_units(
     }
     timers = {timer_name(run): render_timer(run, schedule.timezone) for run in schedule.runs}
     return {SLICE_NAME: render_slice(resources), **services, **timers}
-
-
-def install_step(output_directory: Path, user_unit_directory: Path) -> list[str]:
-    if output_directory.resolve() == user_unit_directory.resolve():
-        return []
-    source = shlex.quote(str(output_directory))
-    destination = shlex.quote(str(user_unit_directory))
-    return [
-        f"mkdir -p {destination}",
-        f"cp {source}/{SLICE_NAME} {source}/{UNIT_PREFIX}-*{SERVICE_SUFFIX} "
-        f"{source}/{UNIT_PREFIX}-*{TIMER_SUFFIX} {destination}/",
-    ]
-
-
-def render_systemd_steps(
-    timer_names: list[str], output_directory: Path, user_unit_directory: Path
-) -> str:
-    weekend = unit_name(ScheduledCommand.WEEKEND)
-    weekend_service = service_name(ScheduledCommand.WEEKEND)
-    sections = {
-        "then enable the timers:": [
-            *install_step(output_directory, user_unit_directory),
-            "loginctl enable-linger $USER",
-            "systemctl --user daemon-reload",
-            f"systemctl --user enable --now {' '.join(timer_names)}",
-        ],
-        "start a run by hand:": [f"systemctl --user start {weekend_service}"],
-        "follow its log:": [f"journalctl --user -u {weekend} -f"],
-        "check on it and on the timers:": [
-            f"systemctl --user status {weekend}",
-            f"systemctl --user list-timers '{UNIT_PREFIX}-*'",
-        ],
-    }
-    lines = [line for title, steps in sections.items() for line in [title, *indented(steps)]]
-    return "\n".join(lines)
-
-
-def indented(lines: list[str]) -> list[str]:
-    return [f"  {line}" for line in lines]
 
 
 def write_units(output_directory: Path, units: dict[str, str]) -> list[Path]:

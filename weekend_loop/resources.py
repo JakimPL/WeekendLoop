@@ -14,6 +14,7 @@ class ResourceKind(StrEnum):
     FENCE = "fences"
     CONFIG = "config"
     AGENT = "agent"
+    SYSTEM = "system"
 
 
 class PromptName(StrEnum):

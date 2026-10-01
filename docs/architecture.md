@@ -77,6 +77,7 @@ weekend_loop/status.py      a run at a glance: liveness, activity, spend, tasks,
 weekend_loop/watch.py       follows a run live: new transcript lines, new events, each change of activity
 weekend_loop/schedule.py    renders the crontab from the policy's schedule block
 weekend_loop/systemd_units.py renders the systemd services and timers from the same block
+weekend_loop/setup/         `setup` and `schedule`: tokens, labels, sandbox, timers and preflight, one line each
 weekend_loop/commands.py    running a policy-declared command and keeping the tail of its output
 weekend_loop/report.py      renders the triage plan a human reads
 weekend_loop/agreement.py   scores a run against the operator's blind labels

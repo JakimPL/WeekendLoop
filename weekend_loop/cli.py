@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
-import shutil
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -17,7 +16,6 @@ from weekend_loop.agreement import (
     write_label_template,
 )
 from weekend_loop.backends import board_operator_login, reader_for, writer_for
-from weekend_loop.claude_cli import CLAUDE_BINARY, SETPRIV_BINARY, TIMEOUT_BINARY
 from weekend_loop.commands import DEFAULT_COMMAND_TIMEOUT_SECONDS, run_command
 from weekend_loop.config_errors import ConfigError
 from weekend_loop.config_view import default_keys, reference_document, resolved_document
@@ -26,7 +24,6 @@ from weekend_loop.demo.publish import publish_demo
 from weekend_loop.demo.seed import DEFAULT_EXAMPLES, seed_environment
 from weekend_loop.execute import execute_run
 from weekend_loop.fences import NO_FORBIDDEN_PATHS, render_fences
-from weekend_loop.github import GH_BINARY
 from weekend_loop.intake import ingest_answers, render_intake
 from weekend_loop.labels import label_commands, sync_local_labels
 from weekend_loop.lock import RunLockHeldError, run_lock
@@ -44,7 +41,7 @@ from weekend_loop.models import (
 from weekend_loop.notify import render_exit_alert, send_alert
 from weekend_loop.policy import load_policy, repo_target
 from weekend_loop.preflight import (
-    SANDBOX_BINARIES,
+    PREFLIGHT_FILENAME_TEMPLATE,
     probe_reading,
     render_preflight,
     run_preflight,
@@ -70,6 +67,25 @@ from weekend_loop.schedule import (
     weekend_deadline,
 )
 from weekend_loop.session import run_weekend
+from weekend_loop.setup import messages as setup_messages
+from weekend_loop.setup.outcomes import (
+    Mark,
+    closing_line,
+    open_items,
+    render_outcome,
+    render_root_block,
+)
+from weekend_loop.setup.steps import run_setup, schedule_status, schedule_step
+from weekend_loop.setup.timers import (
+    cli_binary,
+    installed_timers,
+    missing_unit_binaries,
+    rendered_units,
+    stop_timers,
+    user_manager_running,
+    user_unit_directory,
+)
+from weekend_loop.setup.tokens import TerminalOperator
 from weekend_loop.status import (
     STATUS_EVENT_COUNT,
     STATUS_TRANSCRIPT_LINES,
@@ -83,17 +99,11 @@ from weekend_loop.systemd_units import (
     EXIT_STATUS_VARIABLE,
     SERVICE_RESULT_VARIABLE,
     SUCCESS_SERVICE_RESULT,
-    TIMER_SUFFIX,
-    USER_UNIT_DIRECTORY,
-    render_systemd_steps,
-    render_systemd_units,
-    unit_path_variable,
     write_units,
 )
 from weekend_loop.triage import eligible_issues, finish_triage, prefilter_issues, triage
 from weekend_loop.watch import WATCH_POLL_SECONDS, follow_run
 from weekend_loop.web.application import DEFAULT_HOST, DEFAULT_PORT, serve
-from weekend_loop.workbench import GIT_BINARY
 from weekend_loop.workspace import WorkspaceError, home_directory, open_workspace
 from weekend_loop.workspace_init import initialise_workspace
 
@@ -105,10 +115,14 @@ MISSING_EXAMPLES_TEMPLATE: Final[str] = (
     "or name one with --example"
 )
 READY_TEMPLATE: Final[str] = (
-    "workspace ready at {root}\n"
-    "describe your repository in {config}, then:\n"
-    "  weekend-loop preflight --repo-key <key>"
+    "workspace ready at {root}\ndescribe your repository in {config}, then run `weekend-loop setup`"
 )
+UNITS_WRITTEN_TEMPLATE: Final[str] = (
+    "`weekend-loop schedule on` installs the units in {directory} and turns the runs on"
+)
+SCHEDULE_ON: Final[str] = "on"
+SCHEDULE_OFF: Final[str] = "off"
+SCHEDULE_STATUS: Final[str] = "status"
 DEMO_READY_TEMPLATE: Final[str] = (
     "workspace ready at {root}, configured for the example\n"
     "save a Claude token to {secret}, then:\n"
@@ -117,21 +131,10 @@ DEMO_READY_TEMPLATE: Final[str] = (
 DEFAULT_ISSUE_LIMIT: Final[int] = 200
 DRYRUN_DIRECTORY_NAME: Final[str] = "dryrun"
 LABELS_FILENAME_TEMPLATE: Final[str] = "{repo_key}-labels.csv"
-PREFLIGHT_FILENAME_TEMPLATE: Final[str] = "preflight-{repo_key}.json"
 AGREEMENT_FILENAME: Final[str] = "agreement.json"
 EXIT_OK: Final[int] = 0
 EXIT_BLOCKED: Final[int] = 3
 EXIT_REFUSED: Final[int] = 2
-UV_BINARY: Final[str] = "uv"
-CLI_NAME: Final[str] = "weekend-loop"
-REQUIRED_UNIT_BINARIES: Final[tuple[str, ...]] = (UV_BINARY, CLAUDE_BINARY)
-SUPPORTING_UNIT_BINARIES: Final[tuple[str, ...]] = (
-    GH_BINARY,
-    GIT_BINARY,
-    SETPRIV_BINARY,
-    TIMEOUT_BINARY,
-    *SANDBOX_BINARIES,
-)
 UNREPORTED_VALUE: Final[str] = "unreported"
 OUTSIDE_WINDOW_MESSAGE: Final[str] = (
     "outside the weekend window in policy.yaml; pass --ignore-window to start anyway"
@@ -251,38 +254,68 @@ def command_crontab(options: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def locate_binaries(names: tuple[str, ...]) -> dict[str, Path]:
-    located = {name: shutil.which(name) for name in names}
-    return {name: Path(location) for name, location in located.items() if location is not None}
-
-
-def cli_binary() -> Path:
-    located = shutil.which(CLI_NAME)
-    if located is not None:
-        return Path(located)
-    return Path(sys.executable)
-
-
 def command_systemd(options: argparse.Namespace) -> int:
     policy = load_policy(workspace_of(options))
-    binaries = locate_binaries((*REQUIRED_UNIT_BINARIES, *SUPPORTING_UNIT_BINARIES))
-    missing = [name for name in REQUIRED_UNIT_BINARIES if name not in binaries]
+    missing = missing_unit_binaries()
     if missing:
-        print(f"{', '.join(missing)} not on PATH; run this from the shell that runs weekend-loop")
+        print(setup_messages.SCHEDULE_MISSING_BINARIES.format(names=", ".join(missing)))
         return EXIT_BLOCKED
-    units = render_systemd_units(
-        policy.schedule,
-        policy.scheduled_repo_key,
-        policy.workspace.root,
-        cli_binary(),
-        unit_path_variable(list(binaries.values())),
-        EXIT_BLOCKED,
-        policy.resources,
-    )
-    for path in write_units(options.output_dir, units):
+    for path in write_units(options.output_dir, rendered_units(policy, EXIT_BLOCKED)):
         print(f"wrote {path}")
-    timers = [name for name in units if name.endswith(TIMER_SUFFIX)]
-    print(render_systemd_steps(timers, options.output_dir, Path.home() / USER_UNIT_DIRECTORY))
+    print(UNITS_WRITTEN_TEMPLATE.format(directory=user_unit_directory()))
+    return EXIT_OK
+
+
+def command_setup(options: argparse.Namespace) -> int:
+    operator = TerminalOperator(can_ask=sys.stdin.isatty(), assume_yes=options.yes)
+    if not operator.can_ask and not options.yes:
+        print(setup_messages.NEEDS_TERMINAL, file=sys.stderr)
+        return EXIT_REFUSED
+    root = home_directory(options.home, os.environ, Path.home())
+    result = run_setup(
+        root,
+        options.repo_key,
+        not options.no_schedule,
+        operator,
+        EXIT_BLOCKED,
+        datetime.now(UTC),
+        print,
+    )
+    if result.declined:
+        print(setup_messages.DECLINED)
+        return EXIT_OK
+    for line in render_root_block(result.root_commands):
+        print(line)
+    print()
+    print(closing_line(result.outcomes, result.next_run))
+    return EXIT_OK if open_items(result.outcomes) == 0 else EXIT_BLOCKED
+
+
+def command_schedule(options: argparse.Namespace) -> int:
+    policy = load_policy(workspace_of(options))
+    if not user_manager_running():
+        print(setup_messages.NO_SYSTEMD)
+        return EXIT_BLOCKED
+    now = datetime.now(UTC)
+    if options.action == SCHEDULE_ON:
+        outcome, _ = schedule_step(policy, now, EXIT_BLOCKED)
+        if outcome.mark is not Mark.DONE:
+            print(render_outcome(outcome))
+        if outcome.mark is Mark.FAILED:
+            return EXIT_BLOCKED
+    if options.action == SCHEDULE_OFF:
+        failure = stop_timers(installed_timers(user_unit_directory()))
+        if failure is not None:
+            print(
+                setup_messages.SCHEDULE_FAILED.format(
+                    command=failure.command, reason=failure.reason
+                )
+            )
+            return EXIT_BLOCKED
+        print(setup_messages.RUNS_TURNED_OFF)
+        return EXIT_OK
+    for line in schedule_status(policy, now):
+        print(line)
     return EXIT_OK
 
 
@@ -598,6 +631,8 @@ COMMANDS: Final[dict[str, Callable[[argparse.Namespace], int]]] = {
     "systemd": command_systemd,
     ALERT_EXIT_COMMAND: command_alert_exit,
     "web": command_web,
+    "setup": command_setup,
+    "schedule": command_schedule,
     "status": command_status,
     "watch": command_watch,
 }
@@ -706,8 +741,27 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
 
     subparsers.add_parser("crontab", help="render the crontab for this checkout")
 
+    setup = subparsers.add_parser(
+        "setup", help="set everything up for a repository, asking once before it changes anything"
+    )
+    setup.add_argument("--repo-key", default=None, help="defaults to schedule.repo_key")
+    setup.add_argument("--yes", action="store_true", help="go ahead without asking")
+    setup.add_argument(
+        "--no-schedule", action="store_true", help="leave the scheduled runs as they are"
+    )
+
+    schedule = subparsers.add_parser(
+        "schedule", help="show when runs start, or turn the scheduled runs on or off"
+    )
+    schedule.add_argument(
+        "action",
+        nargs="?",
+        default=SCHEDULE_STATUS,
+        choices=[SCHEDULE_STATUS, SCHEDULE_ON, SCHEDULE_OFF],
+    )
+
     systemd = subparsers.add_parser(
-        "systemd", help="render the systemd services and timers for this checkout"
+        "systemd", help="write the systemd units to a directory, for inspection"
     )
     systemd.add_argument("--output-dir", type=Path, required=True)
 

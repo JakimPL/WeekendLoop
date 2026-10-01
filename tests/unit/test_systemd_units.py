@@ -136,7 +136,7 @@ def test_the_unit_path_puts_the_operator_binaries_before_the_system_directories(
     assert unit_path_variable(binaries) == PATH_VARIABLE
 
 
-def test_the_systemd_command_writes_every_unit_and_prints_the_steps(
+def test_the_systemd_command_writes_every_unit_and_points_to_the_schedule(
     tmp_path: Path, fake_binaries: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     install_fake(fake_binaries, "uv", FAKE_SANDBOX_TOOL)
@@ -154,12 +154,8 @@ def test_the_systemd_command_writes_every_unit_and_prints_the_steps(
     invocation = f"{fake_binaries / 'weekend-loop'} --home {root}"
     assert f"ExecStart={invocation} weekend --repo-key demo" in service
     assert f"Environment=PATH={fake_binaries}:/usr/local/bin:/usr/bin:/bin" in service
-    printed = capsys.readouterr().out
-    assert "loginctl enable-linger $USER" in printed
-    assert "systemctl --user daemon-reload" in printed
-    assert "weekend-loop-weekend-fri-2100.timer" in printed
-    assert "systemctl --user start weekend-loop-weekend.service" in printed
-    assert "journalctl --user -u weekend-loop-weekend -f" in printed
+    printed = capsys.readouterr().out.splitlines()
+    assert printed[-1].startswith("`weekend-loop schedule on` installs the units in")
 
 
 def test_the_systemd_command_needs_uv_on_the_path(

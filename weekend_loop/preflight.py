@@ -78,6 +78,13 @@ UNREACHABLE_DETAIL: Final[str] = (
     "the write probe answered HTTP {status}; the token cannot reach the repository"
 )
 STATUS_PATTERN: Final[re.Pattern[str]] = re.compile(r"\(HTTP (\d{3})\)")
+PREFLIGHT_FILENAME_TEMPLATE: Final[str] = "preflight-{repo_key}.json"
+CLAUDE_TOKEN_CHECK: Final[str] = "claude oauth token"
+SANDBOX_NAMESPACE_CHECK: Final[str] = "sandbox namespace"
+SANDBOX_BINARY_CHECK_TEMPLATE: Final[str] = "sandbox {binary}"
+GITHUB_TOKEN_CHECK_TEMPLATE: Final[str] = "{repo_key} github token"
+REPOSITORY_ACCESS_CHECK_TEMPLATE: Final[str] = "github access to {slug}"
+ISSUE_DEPENDENCIES_CHECK: Final[str] = "issue dependencies"
 SANDBOX_PROBE: Final[tuple[str, ...]] = (
     "bwrap",
     "--unshare-user",
@@ -250,7 +257,7 @@ def check_usage_credits(reading: UsageReading | None, required: bool) -> Preflig
 
 
 def check_sandbox_starts(required: bool) -> PreflightCheck:
-    name = "sandbox namespace"
+    name = SANDBOX_NAMESPACE_CHECK
     if shutil.which(SANDBOX_PROBE[0]) is None:
         return failed(name, required, f"{SANDBOX_PROBE[0]} is not on PATH")
     completed = subprocess.run(
@@ -352,7 +359,7 @@ def check_local_board(repo: RepoTarget, state_directory: Path) -> PreflightCheck
 
 
 def check_repository_access(repo: RepoTarget, state_directory: Path) -> PreflightCheck:
-    name = f"github access to {repo.slug}"
+    name = REPOSITORY_ACCESS_CHECK_TEMPLATE.format(slug=repo.slug)
     try:
         token = read_token(repo.token_path())
     except (FileNotFoundError, ValueError) as error:
@@ -428,7 +435,7 @@ def probe_outcome(status: str) -> bool | None:
 
 
 def check_issue_dependencies(repo: RepoTarget, state_directory: Path) -> PreflightCheck:
-    name = "issue dependencies"
+    name = ISSUE_DEPENDENCIES_CHECK
     try:
         token = read_token(repo.token_path())
     except (FileNotFoundError, ValueError) as error:
@@ -447,7 +454,9 @@ def check_issue_dependencies(repo: RepoTarget, state_directory: Path) -> Preflig
 def github_checks(repo: RepoTarget, repo_key: str, state_directory: Path) -> list[PreflightCheck]:
     return [
         check_binary("gh", GH_BINARY, True),
-        check_secret_file(f"{repo_key} github token", repo.token_path(), True),
+        check_secret_file(
+            GITHUB_TOKEN_CHECK_TEMPLATE.format(repo_key=repo_key), repo.token_path(), True
+        ),
         check_repository_access(repo, state_directory),
         check_issue_dependencies(repo, state_directory),
     ]
@@ -470,10 +479,13 @@ def run_preflight(
         check_binary("setpriv", SETPRIV_BINARY, True),
         check_binary("timeout", TIMEOUT_BINARY, True),
         check_state_directory(policy.state_dir),
-        check_oauth_token("claude oauth token", policy.workspace.oauth_token_path, True),
+        check_oauth_token(CLAUDE_TOKEN_CHECK, policy.workspace.oauth_token_path, True),
         check_settings_file("assessor settings", policy.settings.assessor, True),
         check_settings_file("worker settings", policy.settings.worker, writes),
-        *[check_binary(f"sandbox {binary}", binary, writes) for binary in SANDBOX_BINARIES],
+        *[
+            check_binary(SANDBOX_BINARY_CHECK_TEMPLATE.format(binary=binary), binary, writes)
+            for binary in SANDBOX_BINARIES
+        ],
         check_sandbox_starts(False),
         check_socket_filter(global_node_modules(), False),
         check_binary("choom", CHOOM_BINARY, writes),

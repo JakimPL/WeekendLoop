@@ -2,48 +2,34 @@
 
 ## Before the first run
 
-You need to set up these things yourself:
+`weekend-loop setup` prepares everything a run needs and checks it, asking once before it changes
+anything. Each step ends `ok`, `todo` or `FAIL`. Run it again after any change; it keeps what is
+already in place:
 
-1. Run `claude setup-token` and save the one line it prints after "Your OAuth token" to
-   `<workspace>/secrets/claude-oauth.token` with mode 0600. The command is interactive, so
-   redirecting its output saves the whole dialogue, which preflight refuses.
-2. Install `socat` next to `bwrap`. The sandbox needs it for networking. Without root, run
-   `apt-get download socat` and unpack it with `dpkg -x` into `~/.local`. Or ask an administrator.
-3. On Ubuntu 24.04 and later, let `bwrap` create user namespaces. The kernel setting
-   `kernel.apparmor_restrict_unprivileged_userns` keeps a process without a profile from doing so,
-   and preflight then warns "sandbox namespace: bwrap: loopback: Failed RTM_NEWADDR". A profile
-   that allows them, loaded once, settles it:
+- **Workspace.** Created at `~/.weekend-loop` on the first run, which then stops so you can
+  describe your repository in `config.yaml`.
+- **Claude token.** Asked for with hidden input and saved readable only by you. It is the one line
+  `claude setup-token` prints after "Your OAuth token"; a pasted dialogue is refused.
+- **GitHub token**, for the `github` backend. A fine-grained token with Contents, Issues, Pull
+  requests, Workflows and Metadata. While the repository stays in `dry_run`, keep Contents at
+  read: preflight refuses a token that can push, so a dry run is unable to change anything. Raise
+  it to read and write when you switch to `execute`, and run setup again.
+- **Labels.** The six `weekend:*` labels, created on the repository.
+- **Sandbox.** `bubblewrap` and `socat` must be installed, and on Ubuntu 24.04 and later bwrap
+  needs an AppArmor profile that lets it create user namespaces. These need root, so setup prints
+  the commands to run once instead of running them. The profile it writes allows only bwrap.
+- **Socket filter.** `@anthropic-ai/sandbox-runtime`, installed with npm when your npm can install
+  globally without root. It keeps the worker's commands from opening Unix sockets, such as your
+  session bus.
+- **Schedule.** See [Scheduled runs](#scheduled-runs).
+- **Preflight.** The checks every run makes before it starts. `weekend-loop preflight` shows them
+  one by one.
 
-   ```
-   sudo tee /etc/apparmor.d/bwrap >/dev/null <<'EOF'
-   abi <abi/4.0>,
-   include <tunables/global>
-   profile bwrap /usr/bin/bwrap flags=(unconfined) {
-     userns,
-     include if exists <local/bwrap>
-   }
-   EOF
-   sudo apparmor_parser -r /etc/apparmor.d/bwrap
-   ```
-4. Install the sandbox's socket filter with `npm install -g @anthropic-ai/sandbox-runtime`. It
-   keeps the worker's commands from opening Unix sockets, such as your session bus. Preflight
-   warns "sandbox socket filter" while it is missing.
-
-A repository on the `github` backend also needs a fine-grained token with read and write access to
-Contents, Issues, Pull requests, Workflows and Metadata. Save it as
-`<workspace>/secrets/github-<repo-key>.token`. While the repository stays in `dry_run`, keep
-Contents at read: preflight refuses a token that can push, so a dry run is unable to change
-anything, and raise it to read and write when you switch to `execute`. Preflight learns what the
-token can do by attempting a write that cannot succeed, a branch at a commit that does not exist,
-and reading the answer: a refusal means read-only, a validation error means the token can push.
-When GitHub answers "not found" instead, preflight reads the repository once more and names the
-setting to change: the token's Repository access when the token cannot see the repository, or its
-Contents permission when it can.
-The repository's `permissions` field would only describe the account, which for an owner always
-reads as push.
-
-`weekend-loop preflight --repo-key <key>` lists what is still missing. No phase starts until
-everything is in place.
+Preflight learns what the GitHub token can do by attempting a write that cannot succeed, a branch
+at a commit that does not exist, and reading the answer: a refusal means read-only, a validation
+error means the token can push. When GitHub answers "not found" instead, it reads the repository
+once more and names the setting to change: the token's Repository access when the token cannot see
+the repository, or its Contents permission when it can.
 
 Before each run, Weekend Loop renders two sandbox fences under `<workspace>/agent-home/` from
 packaged templates. They use the home directory of the person running it. The sandbox blocks that
@@ -57,7 +43,7 @@ credits, so a run uses your subscription and never your card. To set a stricter 
 
 For a first weekend, go in this order:
 
-1. `preflight`
+1. `setup`
 2. `candidates`, then label the sheet without looking at the agent's verdicts
 3. `triage` and `agreement`, to see whether the agent's judgment matches yours
 4. `weekend`
@@ -295,37 +281,26 @@ issues, on one the run leaves alone, or on open work outside the run waits, with
 event log. A dependency named either way is no blocker in the assessment: the run decides from the
 links.
 
-## Running under systemd
+## Scheduled runs
 
-systemd user units are the recommended way to schedule runs. They restart a run that crashed or was
-killed, stop every process a run started when the run stops, catch up on a timer the machine
-slept through, and send an alert when a run ends badly. To install them:
-
-```
-weekend-loop systemd --output-dir ~/.config/systemd/user
-loginctl enable-linger $USER        # lets the timers fire while you are logged out
-systemctl --user daemon-reload
-systemctl --user enable --now weekend-loop-prepare-thu-2000.timer \
-    weekend-loop-weekend-fri-2100.timer weekend-loop-weekend-sat-1000.timer
-```
-
-The command writes `weekend-loop-weekend.service`, `weekend-loop-prepare.service`,
-`weekend-loop.slice` and one timer per entry under `schedule:`. It then prints these steps with the
-timer names from your schedule.
-
-The units record your workspace, the `weekend-loop` on your `PATH`, and a `PATH` built from the
-directories holding `claude`, `gh`, `git`, `uv` and the sandbox tools. Run the command from the
-shell you normally use for `weekend-loop`. Run it again whenever your schedule or those locations
-change.
-
-To start a run by hand, follow it and check on it:
+`weekend-loop setup` schedules the runs listed under `schedule:` in `config.yaml`, as systemd user
+timers. They restart a run that crashed or was killed, stop every process a run started when the
+run stops, catch up on a timer the machine slept through, and send an alert when a run ends badly.
 
 ```
-systemctl --user start weekend-loop-weekend.service
-journalctl --user -u weekend-loop-weekend -f
-systemctl --user status weekend-loop-weekend
-systemctl --user list-timers 'weekend-loop-*'
+weekend-loop schedule          # whether runs are on, and when each starts next
+weekend-loop schedule off      # no run starts on its own; a run already going carries on
+weekend-loop schedule on       # turn them back on, with the schedule config.yaml holds now
 ```
+
+`schedule on` writes the units to `~/.config/systemd/user`, lets them start while you are logged
+out, and turns the timers on. Run it, or `weekend-loop setup`, again whenever the schedule, the
+`resources` block or the location of `weekend-loop`, `claude`, `gh`, `git`, `uv` or the sandbox
+tools changes; the units record them. Run it from the shell you normally use for `weekend-loop`.
+
+To follow a run, use `weekend-loop watch`, `weekend-loop status` or `weekend-loop web` (see
+[Watching a run](#watching-a-run)). `weekend-loop systemd --output-dir <directory>` writes the
+units somewhere else for inspection.
 
 What to expect:
 
@@ -336,7 +311,7 @@ What to expect:
 - A worker that runs out of memory ends alone, and the run carries on. Stopping the service ends
   every process the run started, including the capped scopes of its tasks.
 - Every service runs in `weekend-loop.slice`, which caps all the run's processes together at
-  `resources.memory_pool_gb`. Install it with the services.
+  `resources.memory_pool_gb`.
 - Timers are persistent. A timer missed while the machine was off fires at the next boot. If a
   timer fires while a run is going, the run continues, so Saturday's timer catches up for
   Friday's.

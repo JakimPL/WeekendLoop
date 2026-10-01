@@ -71,6 +71,26 @@ def local_moment(
     return datetime.combine(day, time(moment.hour, moment.minute), tzinfo=zone)
 
 
+def week_start_of(local_now: datetime) -> date:
+    return local_now.date() - timedelta(days=local_now.weekday())
+
+
+def next_occurrence(run: ScheduledRun, timezone: str, now: datetime) -> datetime:
+    zone = ZoneInfo(timezone)
+    local_now = now.astimezone(zone)
+    this_week = local_moment(run, week_start_of(local_now), zone, 0)
+    return (
+        this_week if this_week > local_now else local_moment(run, week_start_of(local_now), zone, 1)
+    )
+
+
+def upcoming_runs(schedule: SchedulePolicy, now: datetime) -> list[tuple[ScheduledRun, datetime]]:
+    return sorted(
+        ((run, next_occurrence(run, schedule.timezone, now)) for run in schedule.runs),
+        key=lambda pair: pair[1],
+    )
+
+
 def bounds_of_week(window: WeekendWindow, week_start: date, zone: ZoneInfo) -> WindowBounds:
     closes_next_week = window.closes.minute_of_week <= window.opens.minute_of_week
     return WindowBounds(

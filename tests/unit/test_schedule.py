@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,12 @@ from weekend_loop.models import (
     WeeklyMoment,
     Workspace,
 )
-from weekend_loop.schedule import cron_expression, render_crontab
+from weekend_loop.schedule import (
+    cron_expression,
+    next_occurrence,
+    render_crontab,
+    upcoming_runs,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_CONFIG = REPOSITORY_ROOT / "examples" / "config.yaml"
@@ -97,3 +103,33 @@ def test_the_example_config_asks_before_it_works(workspace_policy: Policy) -> No
     assert runs[0].command is ScheduledCommand.PREPARE
     assert all(run.command is ScheduledCommand.WEEKEND for run in runs[1:])
     assert runs[0].day_of_week is Weekday.THURSDAY
+
+
+def test_a_run_comes_next_this_week_until_its_moment_has_passed() -> None:
+    thursday = ScheduledRun(day_of_week=Weekday.THURSDAY, hour=20, minute=0)
+    before = datetime(2026, 10, 1, 17, 0, tzinfo=UTC)
+    after = datetime(2026, 10, 1, 19, 0, tzinfo=UTC)
+    assert next_occurrence(thursday, "Europe/Warsaw", before).isoformat() == (
+        "2026-10-01T20:00:00+02:00"
+    )
+    assert next_occurrence(thursday, "Europe/Warsaw", after).isoformat() == (
+        "2026-10-08T20:00:00+02:00"
+    )
+
+
+def test_the_upcoming_runs_come_in_the_order_they_start() -> None:
+    schedule = SchedulePolicy(
+        repo_key="demo",
+        timezone="UTC",
+        runs=[
+            ScheduledRun(day_of_week=Weekday.FRIDAY, hour=21, minute=0),
+            ScheduledRun(
+                day_of_week=Weekday.THURSDAY, hour=20, minute=0, command=ScheduledCommand.PREPARE
+            ),
+        ],
+    )
+    upcoming = upcoming_runs(schedule, datetime(2026, 10, 1, 12, 0, tzinfo=UTC))
+    assert [run.command for run, _ in upcoming] == [
+        ScheduledCommand.PREPARE,
+        ScheduledCommand.WEEKEND,
+    ]
