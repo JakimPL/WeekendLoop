@@ -3,7 +3,6 @@ repos:
     slug: example-org/example-board
     mode: execute
     backend: local
-    token_file: secrets/github-demo.token
     base_branch: main
     recurse_submodules: false
     remote_url: null

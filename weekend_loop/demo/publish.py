@@ -12,15 +12,13 @@ from weekend_loop.demo.board import commit_playground
 from weekend_loop.demo.seed import (
     GITHUB_REPO_KEY,
     SeedOutcome,
-    SeedRunner,
     acceptance_map,
     issues_directory,
     load_seed_issues,
-    seed_environment,
     seed_repository,
     write_acceptance_map,
 )
-from weekend_loop.github import read_token
+from weekend_loop.github import GitHubReader, read_token, reader_for
 from weekend_loop.models import Backend, CheckOutcome, Policy, PreflightReport, RepoTarget
 from weekend_loop.policy import repo_target
 from weekend_loop.preflight import probe_reading, run_preflight
@@ -155,9 +153,9 @@ def publish_playground(context: SetupContext) -> str:
     return f"pushed the Pocketchat mockup to {context.repo.slug} on {base_branch}"
 
 
-def gh_environment(context: SetupContext) -> dict[str, str]:
+def gh_commands(context: SetupContext) -> GitHubReader:
     try:
-        return seed_environment(context.repo, context.policy.state_dir)
+        return reader_for(context.repo, context.policy.state_dir)
     except (FileNotFoundError, ValueError) as error:
         raise OperatorActionRequiredError(instructions(TOKEN_INSTRUCTIONS, context)) from error
 
@@ -177,10 +175,10 @@ def seed_summary(outcome: SeedOutcome, tests: dict[str, str]) -> str:
 
 
 def seed_issues(context: SetupContext) -> str:
-    runner = SeedRunner(dry_run=False, environment=gh_environment(context))
+    commands = gh_commands(context)
     issues = load_seed_issues(issues_directory(context.examples))
     try:
-        outcome = seed_repository(runner, context.repo, context.policy.labels, issues)
+        outcome = seed_repository(commands, context.repo, context.policy.labels, issues)
     except subprocess.CalledProcessError as error:
         if is_permission_refusal(error.stderr):
             detail = error.stderr.strip()[-REFUSAL_DETAIL_CHARACTERS:]

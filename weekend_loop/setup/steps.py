@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import shlex
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Final
 
-from weekend_loop.commands import run_command
 from weekend_loop.config_view import EXAMPLE_EMAIL, EXAMPLE_SLUG
-from weekend_loop.demo.seed import seed_environment
 from weekend_loop.fences import NO_FORBIDDEN_PATHS, render_fences
-from weekend_loop.labels import label_commands
+from weekend_loop.github import reader_for
+from weekend_loop.labels import create_labels, label_commands
 from weekend_loop.models import Backend, CheckOutcome, Policy, Record, RepoTarget, Workspace
 from weekend_loop.policy import load_policy, repo_target
 from weekend_loop.preflight import (
@@ -46,9 +43,6 @@ from weekend_loop.setup.tokens import Operator, claude_token_step, github_token_
 from weekend_loop.workspace import open_workspace
 from weekend_loop.workspace_init import initialise_workspace
 
-LABEL_TIMEOUT_SECONDS: Final[int] = 60
-LABEL_NAME_POSITION: Final[int] = 3
-
 type Echo = Callable[[str], None]
 
 
@@ -77,19 +71,11 @@ def described(policy: Policy, repo: RepoTarget) -> bool:
 
 
 def labels_step(policy: Policy, repo: RepoTarget) -> StepOutcome:
-    environment = seed_environment(repo, policy.state_dir)
     commands = label_commands(policy, repo)
-    for arguments in commands:
-        result = run_command(
-            shlex.join(arguments), Path.cwd(), environment, LABEL_TIMEOUT_SECONDS, None
-        )
-        if result.exit_code != 0:
-            lines = result.output_tail.splitlines()
-            reason = lines[-1] if lines else messages.NO_ANSWER
-            label = arguments[LABEL_NAME_POSITION]
-            return failed(
-                messages.LABELS, messages.LABELS_REFUSED.format(label=label, reason=reason)
-            )
+    refusal = create_labels(reader_for(repo, policy.state_dir), commands)
+    if refusal is not None:
+        detail = messages.LABELS_REFUSED.format(label=refusal.label, reason=refusal.reason)
+        return failed(messages.LABELS, detail)
     return done(messages.LABELS, messages.LABELS_DONE.format(count=len(commands), slug=repo.slug))
 
 

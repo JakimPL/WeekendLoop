@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import re
-import subprocess
 from pathlib import Path
 from typing import Final
 
@@ -11,18 +10,15 @@ import yaml
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from weekend_loop.acceptance import acceptance_map_path
-from weekend_loop.github import CONFIG_DIRECTORY_NAME, github_environment, read_token
-from weekend_loop.labels import board_labels
+from weekend_loop.github import GhCommands
+from weekend_loop.labels import board_labels, label_arguments
 from weekend_loop.models import (
     BoardLabel,
     IneligibilityReason,
     LabelPolicy,
-    Policy,
     RepoTarget,
     Verdict,
 )
-from weekend_loop.policy import repo_target
-from weekend_loop.workspace import DEFAULT_HOME_NAME
 
 DEFAULT_EXAMPLES: Final[Path] = Path("examples")
 ISSUES_DIRECTORY_NAME: Final[str] = "issues"
@@ -42,7 +38,6 @@ def acceptance_directory(examples: Path) -> Path:
     return examples / ACCEPTANCE_DIRECTORY_NAME
 
 
-DEFAULT_WORKSPACE: Final[Path] = Path.home() / DEFAULT_HOME_NAME
 LOCAL_REPO_KEY: Final[str] = "demo"
 GITHUB_REPO_KEY: Final[str] = "demo-github"
 ISSUE_LIST_LIMIT: Final[int] = 200
@@ -85,6 +80,19 @@ class ListedIssue(BaseModel):
     title: str
 
 
+class ReferencedObject(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    sha: str
+
+
+class ListedReference(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    ref: str
+    object: ReferencedObject
+
+
 class SeedOutcome(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -112,59 +120,16 @@ def example_labels() -> list[BoardLabel]:
     ]
 
 
-class SeedRunner:
-    def __init__(self, dry_run: bool, environment: dict[str, str]) -> None:
-        self.dry_run = dry_run
-        self.environment = environment
-        self.log: list[str] = []
-        self._placeholder_issue_number = 0
-
-    def run(self, arguments: list[str], stdin: str | None = None) -> str:
-        self.log.append(" ".join(arguments))
-        if self.dry_run:
-            return ""
-        completed = subprocess.run(
-            arguments,
-            input=stdin,
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return completed.stdout
-
-    def next_placeholder_issue_number(self) -> int:
-        self._placeholder_issue_number += 1
-        return self._placeholder_issue_number
+def create_label(commands: GhCommands, slug: str, label: BoardLabel) -> None:
+    commands.run(label_arguments(slug, label))
 
 
-def create_label(runner: SeedRunner, slug: str, label: BoardLabel) -> None:
-    runner.run(
-        [
-            "gh",
-            "label",
-            "create",
-            label.name,
-            "--repo",
-            slug,
-            "--description",
-            label.description,
-            "--color",
-            label.colour,
-            "--force",
-        ]
-    )
-
-
-def create_issue(runner: SeedRunner, slug: str, issue: SeedIssue) -> int:
-    arguments = ["gh", "issue", "create", "--repo", slug, "--title", issue.title]
+def create_issue(commands: GhCommands, slug: str, issue: SeedIssue) -> int:
+    arguments = ["issue", "create", "--repo", slug, "--title", issue.title]
     arguments.extend(["--body-file", "-"])
     for label in issue.labels:
         arguments.extend(["--label", label])
-    output = runner.run(arguments, stdin=issue.body)
-    if runner.dry_run:
-        return runner.next_placeholder_issue_number()
-    return issue_number_from_url(output)
+    return issue_number_from_url(commands.run(arguments, stdin=issue.body))
 
 
 def issue_number_from_url(output: str) -> int:
@@ -174,10 +139,9 @@ def issue_number_from_url(output: str) -> int:
     return int(match.group(1))
 
 
-def existing_issue_numbers(runner: SeedRunner, slug: str) -> dict[str, int]:
-    output = runner.run(
+def existing_issue_numbers(commands: GhCommands, slug: str) -> dict[str, int]:
+    output = commands.run(
         [
-            "gh",
             "issue",
             "list",
             "--repo",
@@ -196,49 +160,38 @@ def existing_issue_numbers(runner: SeedRunner, slug: str) -> dict[str, int]:
     return {issue.title: issue.number for issue in listed}
 
 
-def positive_count(output: str) -> bool:
-    return bool(output.strip()) and int(output) > 0
+def branch_exists(commands: GhCommands, slug: str, branch: str) -> bool:
+    output = commands.run(["api", f"repos/{slug}/git/matching-refs/heads/{branch}"])
+    references = TypeAdapter(list[ListedReference]).validate_json(output or "[]")
+    return any(reference.ref == f"refs/heads/{branch}" for reference in references)
 
 
-def branch_exists(runner: SeedRunner, slug: str, branch: str) -> bool:
-    exact_match = f'[.[] | select(.ref == "refs/heads/{branch}")] | length'
-    return positive_count(
-        runner.run(
-            ["gh", "api", f"repos/{slug}/git/matching-refs/heads/{branch}", "--jq", exact_match]
-        )
-    )
-
-
-def pull_request_exists(runner: SeedRunner, slug: str, branch: str) -> bool:
-    return positive_count(
-        runner.run(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--repo",
-                slug,
-                "--head",
-                branch,
-                "--state",
-                "all",
-                "--json",
-                "number",
-                "--jq",
-                "length",
-            ]
-        )
-    )
-
-
-def create_overlapping_branch(runner: SeedRunner, repo: RepoTarget, branch: str) -> None:
-    base_reference = runner.run(
-        ["gh", "api", f"repos/{repo.slug}/git/ref/heads/{repo.base_branch}", "--jq", ".object.sha"]
-    ).strip()
-    base_sha = base_reference or "<base-sha>"
-    runner.run(
+def pull_request_exists(commands: GhCommands, slug: str, branch: str) -> bool:
+    output = commands.run(
         [
-            "gh",
+            "pr",
+            "list",
+            "--repo",
+            slug,
+            "--head",
+            branch,
+            "--state",
+            "all",
+            "--json",
+            "number",
+        ]
+    )
+    return bool(json.loads(output or "[]"))
+
+
+def base_commit(commands: GhCommands, repo: RepoTarget) -> str:
+    output = commands.run(["api", f"repos/{repo.slug}/git/ref/heads/{repo.base_branch}"])
+    return ListedReference.model_validate_json(output).object.sha
+
+
+def create_overlapping_branch(commands: GhCommands, repo: RepoTarget, branch: str) -> None:
+    commands.run(
+        [
             "api",
             "--method",
             "POST",
@@ -246,13 +199,12 @@ def create_overlapping_branch(runner: SeedRunner, repo: RepoTarget, branch: str)
             "-f",
             f"ref=refs/heads/{branch}",
             "-f",
-            f"sha={base_sha}",
+            f"sha={base_commit(commands, repo)}",
         ]
     )
     encoded_content = base64.b64encode(OVERLAP_FILE_CONTENT.encode()).decode()
-    runner.run(
+    commands.run(
         [
-            "gh",
             "api",
             "--method",
             "PUT",
@@ -268,11 +220,10 @@ def create_overlapping_branch(runner: SeedRunner, repo: RepoTarget, branch: str)
 
 
 def open_overlapping_pull_request(
-    runner: SeedRunner, repo: RepoTarget, branch: str, issue_number: int
+    commands: GhCommands, repo: RepoTarget, branch: str, issue_number: int
 ) -> None:
-    runner.run(
+    commands.run(
         [
-            "gh",
             "pr",
             "create",
             "--repo",
@@ -291,54 +242,56 @@ def open_overlapping_pull_request(
 
 
 def ensure_overlapping_pull_request(
-    runner: SeedRunner, repo: RepoTarget, branch: str, issue_number: int
+    commands: GhCommands, repo: RepoTarget, branch: str, issue_number: int
 ) -> bool:
-    if not branch_exists(runner, repo.slug, branch):
-        create_overlapping_branch(runner, repo, branch)
-    if pull_request_exists(runner, repo.slug, branch):
+    if not branch_exists(commands, repo.slug, branch):
+        create_overlapping_branch(commands, repo, branch)
+    if pull_request_exists(commands, repo.slug, branch):
         return False
-    open_overlapping_pull_request(runner, repo, branch, issue_number)
+    open_overlapping_pull_request(commands, repo, branch, issue_number)
     return True
 
 
 def ensure_issues(
-    runner: SeedRunner, slug: str, issues: list[SeedIssue]
+    commands: GhCommands, slug: str, issues: list[SeedIssue]
 ) -> tuple[dict[str, int], list[str]]:
-    existing = existing_issue_numbers(runner, slug)
+    existing = existing_issue_numbers(commands, slug)
     issue_numbers: dict[str, int] = {}
     created: list[str] = []
     for issue in issues:
         if issue.title in existing:
             issue_numbers[issue.key] = existing[issue.title]
             continue
-        issue_numbers[issue.key] = create_issue(runner, slug, issue)
+        issue_numbers[issue.key] = create_issue(commands, slug, issue)
         created.append(issue.key)
     return issue_numbers, created
 
 
 def ensure_overlapping_pull_requests(
-    runner: SeedRunner, repo: RepoTarget, issues: list[SeedIssue], issue_numbers: dict[str, int]
+    commands: GhCommands, repo: RepoTarget, issues: list[SeedIssue], issue_numbers: dict[str, int]
 ) -> list[str]:
     return [
         issue.overlapping_branch
         for issue in issues
         if issue.overlapping_branch is not None
         and ensure_overlapping_pull_request(
-            runner, repo, issue.overlapping_branch, issue_numbers[issue.key]
+            commands, repo, issue.overlapping_branch, issue_numbers[issue.key]
         )
     ]
 
 
 def seed_repository(
-    runner: SeedRunner, repo: RepoTarget, labels: LabelPolicy, issues: list[SeedIssue]
+    commands: GhCommands, repo: RepoTarget, labels: LabelPolicy, issues: list[SeedIssue]
 ) -> SeedOutcome:
     for label in [*board_labels(labels), *example_labels()]:
-        create_label(runner, repo.slug, label)
-    issue_numbers, created_issues = ensure_issues(runner, repo.slug, issues)
+        create_label(commands, repo.slug, label)
+    issue_numbers, created_issues = ensure_issues(commands, repo.slug, issues)
     return SeedOutcome(
         issue_numbers=issue_numbers,
         created_issues=created_issues,
-        opened_pull_requests=ensure_overlapping_pull_requests(runner, repo, issues, issue_numbers),
+        opened_pull_requests=ensure_overlapping_pull_requests(
+            commands, repo, issues, issue_numbers
+        ),
     )
 
 
@@ -355,26 +308,3 @@ def write_acceptance_map(state_directory: Path, tests: dict[str, str]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(tests, indent=2) + "\n")
     return path
-
-
-def seed_environment(repo: RepoTarget, state_directory: Path) -> dict[str, str]:
-    token = read_token(repo.token_path())
-    config_directory = state_directory / CONFIG_DIRECTORY_NAME
-    config_directory.mkdir(parents=True, exist_ok=True)
-    return github_environment(token, config_directory)
-
-
-def seed_github(
-    examples: Path, policy: Policy, repo_key: str, apply: bool
-) -> tuple[SeedRunner, SeedOutcome, dict[str, str]]:
-    repo = repo_target(policy, repo_key)
-    runner = SeedRunner(
-        dry_run=not apply,
-        environment=seed_environment(repo, policy.state_dir) if apply else {},
-    )
-    issues = load_seed_issues(issues_directory(examples))
-    outcome = seed_repository(runner, repo, policy.labels, issues)
-    tests = acceptance_map(issues, outcome.issue_numbers)
-    if apply:
-        write_acceptance_map(policy.state_dir, tests)
-    return runner, outcome, tests

@@ -6,36 +6,47 @@ import pytest
 from weekend_loop.demo.seed import (
     GITHUB_REPO_KEY,
     SeedIssue,
-    SeedRunner,
     example_labels,
     issues_directory,
     load_seed_issues,
-    seed_environment,
     seed_repository,
 )
+from weekend_loop.github import reader_for
 from weekend_loop.labels import board_labels
 from weekend_loop.models import IneligibilityReason, Policy, Verdict
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = REPOSITORY_ROOT / "examples"
-CREATED_ISSUE_URL = "https://github.com/owner/repository/issues/99\n"
+ISSUE_URL_TEMPLATE = "https://github.com/owner/repository/issues/{number}\n"
 TEMPLATE_HEADINGS = ("## Business requirement", "## Goal", "## Scope")
 MINIMUM_BODY_LENGTH = 200
 EXPECTED_ISSUE_COUNT = 7
 
 
-class ScriptedRunner(SeedRunner):
+class ScriptedCommands:
     def __init__(self, responses: dict[str, str]) -> None:
-        super().__init__(dry_run=False, environment={})
         self.responses = responses
+        self.log: list[str] = []
+        self.created_issues = 0
 
     def run(self, arguments: list[str], stdin: str | None = None) -> str:
-        command = " ".join(arguments)
+        command = " ".join(["gh", *arguments])
         self.log.append(command)
+        if command.startswith("gh issue create"):
+            self.created_issues += 1
+            return ISSUE_URL_TEMPLATE.format(number=self.created_issues)
         return next(
             (output for prefix, output in self.responses.items() if command.startswith(prefix)),
             "",
         )
+
+
+def reference(slug: str, branch: str) -> dict[str, str | dict[str, str]]:
+    return {"ref": f"refs/heads/{branch}", "object": {"sha": f"{slug}-commit"}}
+
+
+def references(slug: str, branch: str) -> str:
+    return json.dumps([reference(slug, branch)])
 
 
 def listed_issues(issues: list[SeedIssue]) -> str:
@@ -84,18 +95,29 @@ def test_every_executable_issue_has_a_hidden_acceptance_test(issues: list[SeedIs
             assert (EXAMPLES / "acceptance" / issue.acceptance_test).is_file(), issue.key
 
 
-def test_dry_run_plans_labels_issues_and_the_overlapping_pull_request(
+def test_an_empty_repository_gets_labels_issues_and_the_overlapping_pull_request(
     issues: list[SeedIssue], workspace_policy: Policy
 ) -> None:
     policy = workspace_policy
-    runner = SeedRunner(dry_run=True, environment={})
-    outcome = seed_repository(runner, policy.repos["demo"], policy.labels, issues)
-    log = "\n".join(runner.log)
+    repo = policy.repos[GITHUB_REPO_KEY]
+    commands = ScriptedCommands(
+        {
+            "gh issue list": "[]",
+            f"gh api repos/{repo.slug}/git/matching-refs": "[]",
+            f"gh api repos/{repo.slug}/git/ref/heads/main": json.dumps(
+                reference(repo.slug, "main")
+            ),
+            "gh pr list": "[]",
+        }
+    )
+    outcome = seed_repository(commands, repo, policy.labels, issues)
+    log = "\n".join(commands.log)
     for label in [*board_labels(policy.labels), *example_labels()]:
         assert label.name in log
     for issue in issues:
         assert issue.title in log
     assert log.count("gh issue create") == EXPECTED_ISSUE_COUNT
+    assert f"sha={repo.slug}-commit" in log
     assert log.count("gh pr create") == 1
     assert sorted(outcome.issue_numbers.values()) == list(range(1, EXPECTED_ISSUE_COUNT + 1))
 
@@ -107,7 +129,7 @@ def test_applying_runs_gh_as_the_pilot_token_owner(
     token_file.write_text("pilot-token\n")
     policy = workspace_policy
     repo = policy.repos["demo"].model_copy(update={"token_file": token_file})
-    environment = seed_environment(repo, tmp_path)
+    environment = reader_for(repo, tmp_path).environment
     assert environment["GH_TOKEN"] == "pilot-token"
     assert environment["GH_CONFIG_DIR"] == str(tmp_path / "gh-config")
 
@@ -117,15 +139,15 @@ def test_a_seeded_repository_is_left_as_it_is(
 ) -> None:
     policy = workspace_policy
     repo = policy.repos[GITHUB_REPO_KEY]
-    runner = ScriptedRunner(
+    commands = ScriptedCommands(
         {
             "gh issue list": listed_issues(issues),
-            f"gh api repos/{repo.slug}/git/matching-refs": "1",
-            "gh pr list": "1",
+            f"gh api repos/{repo.slug}/git/matching-refs": references(repo.slug, "feat/dark-mode"),
+            "gh pr list": '[{"number": 8}]',
         }
     )
-    outcome = seed_repository(runner, repo, policy.labels, issues)
-    log = "\n".join(runner.log)
+    outcome = seed_repository(commands, repo, policy.labels, issues)
+    log = "\n".join(commands.log)
     assert outcome.created_issues == []
     assert outcome.opened_pull_requests == []
     assert outcome.issue_numbers == {issue.key: number for number, issue in enumerate(issues, 1)}
@@ -138,16 +160,15 @@ def test_a_half_seeded_repository_is_completed(
 ) -> None:
     policy = workspace_policy
     repo = policy.repos[GITHUB_REPO_KEY]
-    runner = ScriptedRunner(
+    commands = ScriptedCommands(
         {
             "gh issue list": listed_issues(issues[:3]),
-            "gh issue create": CREATED_ISSUE_URL,
-            f"gh api repos/{repo.slug}/git/matching-refs": "1",
-            "gh pr list": "0",
+            f"gh api repos/{repo.slug}/git/matching-refs": references(repo.slug, "feat/dark-mode"),
+            "gh pr list": "[]",
         }
     )
-    outcome = seed_repository(runner, repo, policy.labels, issues)
-    log = "\n".join(runner.log)
+    outcome = seed_repository(commands, repo, policy.labels, issues)
+    log = "\n".join(commands.log)
     assert outcome.created_issues == [issue.key for issue in issues[3:]]
     assert outcome.opened_pull_requests == ["feat/dark-mode"]
     assert log.count("gh issue create") == EXPECTED_ISSUE_COUNT - 3

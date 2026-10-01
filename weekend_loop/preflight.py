@@ -24,7 +24,7 @@ from weekend_loop.claude_cli import (
     read_oauth_token,
 )
 from weekend_loop.confinement import CHOOM_BINARY, TASKSET_BINARY, scopes_available
-from weekend_loop.github import CONFIG_DIRECTORY_NAME, GH_BINARY, GitHubReader, read_token
+from weekend_loop.github import GitHubReader, gh_binary, reader_for
 from weekend_loop.limits import (
     NO_READING_REASON,
     live_window,
@@ -361,10 +361,9 @@ def check_local_board(repo: RepoTarget, state_directory: Path) -> PreflightCheck
 def check_repository_access(repo: RepoTarget, state_directory: Path) -> PreflightCheck:
     name = REPOSITORY_ACCESS_CHECK_TEMPLATE.format(slug=repo.slug)
     try:
-        token = read_token(repo.token_path())
+        reader = reader_for(repo, state_directory)
     except (FileNotFoundError, ValueError) as error:
         return failed(name, True, str(error))
-    reader = GitHubReader(repo.slug, token, state_directory / CONFIG_DIRECTORY_NAME)
     status = write_probe_status(reader, repo.slug)
     writable = probe_outcome(status)
     if writable is None:
@@ -397,7 +396,7 @@ def write_probe_status(reader: GitHubReader, slug: str) -> str:
 
 def read_probe_status(reader: GitHubReader, slug: str) -> str:
     try:
-        reader.run(["api", f"repos/{slug}", "--jq", ".full_name"])
+        reader.run(["api", f"repos/{slug}"])
     except subprocess.CalledProcessError as error:
         return status_of(error)
     return VISIBLE_STATUS
@@ -437,10 +436,9 @@ def probe_outcome(status: str) -> bool | None:
 def check_issue_dependencies(repo: RepoTarget, state_directory: Path) -> PreflightCheck:
     name = ISSUE_DEPENDENCIES_CHECK
     try:
-        token = read_token(repo.token_path())
+        reader = reader_for(repo, state_directory)
     except (FileNotFoundError, ValueError) as error:
         return failed(name, True, str(error))
-    reader = GitHubReader(repo.slug, token, state_directory / CONFIG_DIRECTORY_NAME)
     try:
         blockers = reader.open_blockers()
     except subprocess.CalledProcessError as error:
@@ -453,7 +451,7 @@ def check_issue_dependencies(repo: RepoTarget, state_directory: Path) -> Preflig
 
 def github_checks(repo: RepoTarget, repo_key: str, state_directory: Path) -> list[PreflightCheck]:
     return [
-        check_binary("gh", GH_BINARY, True),
+        check_binary("gh", gh_binary(repo, state_directory), True),
         check_secret_file(
             GITHUB_TOKEN_CHECK_TEMPLATE.format(repo_key=repo_key), repo.token_path(), True
         ),

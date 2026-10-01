@@ -6,7 +6,7 @@ import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from weekend_loop.guards import assert_branch_allowed, assert_labels_allowed
 from weekend_loop.models import (
@@ -46,10 +46,7 @@ query($owner: String!, $name: String!, $endCursor: String) {
 """
 API_VERSION_HEADER: Final[str] = "X-GitHub-Api-Version"
 STACKS_API_VERSION: Final[str] = "2026-03-10"
-BLOCKERS_FILTER: Final[str] = (
-    ".data.repository.issues.nodes[] | "
-    '{number, blocked_by: [.blockedBy.nodes[] | select(.state == "OPEN") | .number]}'
-)
+OPEN_STATE: Final[str] = "OPEN"
 
 
 def read_token(path: Path) -> str:
@@ -121,13 +118,29 @@ def issue_from_payload(
     )
 
 
-def parse_blockers(output: str) -> dict[int, list[int]]:
+def json_documents(output: str) -> list[Any]:
+    decoder = json.JSONDecoder()
+    documents: list[Any] = []
+    position = 0
+    while True:
+        while position < len(output) and output[position].isspace():
+            position += 1
+        if position == len(output):
+            return documents
+        document, position = decoder.raw_decode(output, position)
+        documents.append(document)
+
+
+def open_numbers(connection: dict[str, Any]) -> list[int]:
+    nodes = connection.get("nodes") or []
+    return sorted(int(node["number"]) for node in nodes if node.get("state") == OPEN_STATE)
+
+
+def blockers_from_pages(output: str) -> dict[int, list[int]]:
     blockers: dict[int, list[int]] = {}
-    for line in output.splitlines():
-        if not line.strip():
-            continue
-        item = json.loads(line)
-        blockers[int(item["number"])] = sorted(int(number) for number in item["blocked_by"])
+    for page in json_documents(output):
+        for issue in page["data"]["repository"]["issues"]["nodes"]:
+            blockers[int(issue["number"])] = open_numbers(issue["blockedBy"])
     return blockers
 
 
@@ -173,9 +186,14 @@ def last_foreign_activity(comments: list[IssueComment], owner_login: str) -> dat
     return max(foreign) if foreign else None
 
 
+class GhCommands(Protocol):
+    def run(self, arguments: list[str], stdin: str | None = None) -> str: ...
+
+
 class GitHubReader:
-    def __init__(self, slug: str, token: str, config_directory: Path) -> None:
+    def __init__(self, slug: str, token: str, config_directory: Path, binary: str) -> None:
         self.slug = slug
+        self.binary = binary
         self.environment = github_environment(token, config_directory)
         config_directory.mkdir(parents=True, exist_ok=True)
 
@@ -183,7 +201,7 @@ class GitHubReader:
         if stdin is not None:
             return self.run_with_input(arguments, stdin)
         completed = subprocess.run(
-            [GH_BINARY, *arguments],
+            [self.binary, *arguments],
             stdin=subprocess.DEVNULL,
             env=self.environment,
             capture_output=True,
@@ -195,7 +213,7 @@ class GitHubReader:
 
     def run_with_input(self, arguments: list[str], body: str) -> str:
         completed = subprocess.run(
-            [GH_BINARY, *arguments],
+            [self.binary, *arguments],
             input=body,
             env=self.environment,
             capture_output=True,
@@ -214,7 +232,7 @@ class GitHubReader:
         return parsed if isinstance(parsed, dict) else {}
 
     def viewer_login(self) -> str:
-        return self.run(["api", "user", "--jq", ".login"]).strip()
+        return text_of(self.run_json_object(["api", "user"]), "login")
 
     def open_pull_requests(self, limit: int) -> list[PullRequest]:
         payload = self.run_json_list(
@@ -270,11 +288,9 @@ class GitHubReader:
                 f"owner={owner}",
                 "-f",
                 f"name={name}",
-                "--jq",
-                BLOCKERS_FILTER,
             ]
         )
-        return parse_blockers(output)
+        return blockers_from_pages(output)
 
     def issue_comments(self, issue_number: int) -> list[IssueComment]:
         payload = self.run_json_object(
@@ -286,9 +302,18 @@ class GitHubReader:
         return [comment_from_payload(item) for item in comments if isinstance(item, dict)]
 
 
+def gh_binary(repo: RepoTarget, state_directory: Path) -> str:
+    return GH_BINARY
+
+
 def reader_for(repo: RepoTarget, state_directory: Path) -> GitHubReader:
     token = read_token(repo.token_path())
-    return GitHubReader(repo.slug, token, state_directory / CONFIG_DIRECTORY_NAME)
+    return GitHubReader(
+        repo.slug,
+        token,
+        state_directory / CONFIG_DIRECTORY_NAME,
+        gh_binary(repo, state_directory),
+    )
 
 
 PULL_REQUEST_URL_PATTERN: Final[re.Pattern[str]] = re.compile(r"https://\S+/pull/\d+")

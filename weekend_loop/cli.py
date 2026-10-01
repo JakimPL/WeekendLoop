@@ -16,16 +16,21 @@ from weekend_loop.agreement import (
     write_label_template,
 )
 from weekend_loop.backends import board_operator_login, reader_for, writer_for
-from weekend_loop.commands import DEFAULT_COMMAND_TIMEOUT_SECONDS, run_command
 from weekend_loop.config_errors import ConfigError
 from weekend_loop.config_view import default_keys, reference_document, resolved_document
 from weekend_loop.demo.board import build_demo, planned_demo, render_demo
 from weekend_loop.demo.publish import publish_demo
-from weekend_loop.demo.seed import DEFAULT_EXAMPLES, seed_environment
+from weekend_loop.demo.seed import DEFAULT_EXAMPLES
 from weekend_loop.execute import execute_run
 from weekend_loop.fences import NO_FORBIDDEN_PATHS, render_fences
+from weekend_loop.github import reader_for as github_reader_for
 from weekend_loop.intake import ingest_answers, render_intake
-from weekend_loop.labels import label_commands, sync_local_labels
+from weekend_loop.labels import (
+    LABEL_NAME_POSITION,
+    create_labels,
+    label_commands,
+    sync_local_labels,
+)
 from weekend_loop.lock import RunLockHeldError, run_lock
 from weekend_loop.models import (
     Backend,
@@ -131,6 +136,7 @@ DEMO_READY_TEMPLATE: Final[str] = (
 DEFAULT_ISSUE_LIMIT: Final[int] = 200
 DRYRUN_DIRECTORY_NAME: Final[str] = "dryrun"
 LABELS_FILENAME_TEMPLATE: Final[str] = "{repo_key}-labels.csv"
+LABEL_REFUSED_TEMPLATE: Final[str] = "GitHub refused the label {label}: {reason}"
 AGREEMENT_FILENAME: Final[str] = "agreement.json"
 EXIT_OK: Final[int] = 0
 EXIT_BLOCKED: Final[int] = 3
@@ -191,15 +197,21 @@ def command_labels(options: argparse.Namespace) -> int:
         for name in sync_local_labels(policy, repo):
             print(f"wrote {name}")
         return EXIT_OK
-    environment = seed_environment(repo, policy.state_dir)
-    for arguments in label_commands(policy, repo):
-        if options.dry_run:
-            print(" ".join(arguments))
-            continue
-        run_command(
-            shlex.join(arguments), Path.cwd(), environment, DEFAULT_COMMAND_TIMEOUT_SECONDS, None
+    commands = label_commands(policy, repo)
+    reader = github_reader_for(repo, policy.state_dir)
+    if options.dry_run:
+        for arguments in commands:
+            print(shlex.join([reader.binary, *arguments]))
+        return EXIT_OK
+    refusal = create_labels(reader, commands)
+    if refusal is not None:
+        print(
+            LABEL_REFUSED_TEMPLATE.format(label=refusal.label, reason=refusal.reason),
+            file=sys.stderr,
         )
-        print(f"wrote {arguments[3]}")
+        return EXIT_BLOCKED
+    for arguments in commands:
+        print(f"wrote {arguments[LABEL_NAME_POSITION]}")
     return EXIT_OK
 
 

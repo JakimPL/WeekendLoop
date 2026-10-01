@@ -125,13 +125,20 @@ def log_body(arguments):
 
 data = json.loads((here / "gh-data.json").read_text())
 if arguments[:2] == ["api", "user"]:
-    print(data["login"])
+    print(json.dumps({"login": data["login"]}))
 elif arguments[:2] == ["api", "graphql"]:
     if data.get("graphql_error"):
         print(data["graphql_error"], file=sys.stderr)
         raise SystemExit(1)
-    for number, blocked_by in data.get("blockers", {}).items():
-        print(json.dumps({"number": int(number), "blocked_by": blocked_by}))
+    nodes = [
+        {
+            "number": int(number),
+            "blockedBy": {"nodes": [{"number": by, "state": "OPEN"} for by in blocked_by]},
+        }
+        for number, blocked_by in data.get("blockers", {}).items()
+    ]
+    page_info = {"hasNextPage": False, "endCursor": None}
+    print(json.dumps({"data": {"repository": {"issues": {"nodes": nodes, "pageInfo": page_info}}}}))
 elif arguments[:3] == ["api", "-X", "POST"] and arguments[3].endswith("/stacks"):
     with (here / "gh-stacks.jsonl").open("a") as stacks:
         stacks.write(json.dumps(json.loads(sys.stdin.read())) + "\\n")
@@ -144,7 +151,7 @@ elif arguments[:1] == ["api"] and arguments[1].startswith("repos/"):
     if data.get("read_status"):
         print(json.dumps({"message": "Not Found", "status": data["read_status"]}))
         raise SystemExit(1)
-    print(json.dumps(data["push"]))
+    print(json.dumps({"full_name": arguments[1].removeprefix("repos/")}))
 elif arguments[:2] == ["label", "create"]:
     print(f"label {arguments[2]} created")
 elif arguments[:2] == ["pr", "list"]:

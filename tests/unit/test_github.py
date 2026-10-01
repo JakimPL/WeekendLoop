@@ -9,11 +9,12 @@ import pytest
 from tests.unit.conftest import OWNER_LOGIN, issue_payload, write_github_data
 from weekend_loop.backends import with_foreign_activity
 from weekend_loop.github import (
+    GH_BINARY,
     GitHubReader,
+    blockers_from_pages,
     issue_from_payload,
     last_foreign_activity,
     linked_issue_numbers,
-    parse_blockers,
     pull_request_from_payload,
     pull_requests_by_issue,
     read_token,
@@ -26,7 +27,7 @@ FOOTER = "— weekend-loop run {run_id}"
 
 
 def build_reader(tmp_path: Path) -> GitHubReader:
-    return GitHubReader(SLUG, "fake-token", tmp_path / "gh-config")
+    return GitHubReader(SLUG, "fake-token", tmp_path / "gh-config", GH_BINARY)
 
 
 def test_the_listing_payload_becomes_an_issue_record() -> None:
@@ -161,6 +162,24 @@ def test_open_issues_carry_what_blocks_them_on_github(tmp_path: Path, fake_binar
     assert issues[13].blocked_by == []
 
 
-def test_the_blockers_answer_keeps_one_issue_per_line() -> None:
-    answer = '{"number": 17, "blocked_by": [13, 11]}\n\n{"number": 13, "blocked_by": []}\n'
-    assert parse_blockers(answer) == {17: [11, 13], 13: []}
+def blockers_page(issues: dict[int, list[tuple[int, str]]], has_next_page: bool) -> str:
+    nodes = [
+        {
+            "number": number,
+            "blockedBy": {"nodes": [{"number": blocker, "state": state} for blocker, state in by]},
+        }
+        for number, by in issues.items()
+    ]
+    page_info = {"hasNextPage": has_next_page, "endCursor": "cursor" if has_next_page else None}
+    page = {"data": {"repository": {"issues": {"nodes": nodes, "pageInfo": page_info}}}}
+    return json.dumps(page, separators=(",", ":"))
+
+
+def test_paginated_blockers_are_read_from_pages_printed_back_to_back() -> None:
+    first = blockers_page({17: [(13, "OPEN"), (11, "OPEN")]}, True)
+    second = blockers_page({13: [], 19: [(5, "CLOSED"), (13, "OPEN")]}, False)
+    assert blockers_from_pages(first + second) == {17: [11, 13], 13: [], 19: [13]}
+
+
+def test_no_open_issues_means_no_blockers() -> None:
+    assert blockers_from_pages("") == {}

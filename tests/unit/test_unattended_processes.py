@@ -8,7 +8,7 @@ import pytest
 
 from tests.support.fakes import install_fake
 from weekend_loop.commands import run_command
-from weekend_loop.github import GitHubReader
+from weekend_loop.github import GH_BINARY, GitHubReader
 from weekend_loop.models import CheckOutcome
 from weekend_loop.preflight import check_binary
 from weekend_loop.workbench import run_git
@@ -51,7 +51,7 @@ def recorded_stdin(binary: Path) -> str:
 
 
 def build_reader(tmp_path: Path) -> GitHubReader:
-    return GitHubReader("owner/repo", "fake-token", tmp_path / "gh-config")
+    return GitHubReader("owner/repo", "fake-token", tmp_path / "gh-config", GH_BINARY)
 
 
 def test_git_reads_nothing_from_the_orchestrator_input(
